@@ -924,10 +924,10 @@ def trade_setup_engine(results):
     elif short_ready:
         plan = "SHORT READY"
         trigger = "5m DOWNSIDE BREAK + 15m/1h BEARISH"
-    elif tf1h["trend"] == "BULLISH" and tf15["trend"] == "BULLISH":
+    elif tf1h["trend"] == "BULLISH" and tf15["trend"] in ["BULLISH", "MIXED"]:
         plan = "LONG WATCH"
         trigger = "WAIT FOR 5m VALID BREAKOUT"
-    elif tf1h["trend"] == "BEARISH" and tf15["trend"] == "BEARISH":
+    elif tf1h["trend"] == "BEARISH" and tf15["trend"] in ["BEARISH", "MIXED"]:
         plan = "SHORT WATCH"
         trigger = "WAIT FOR 5m DOWNSIDE BREAK"
     else:
@@ -1093,7 +1093,7 @@ def entry_state_engine(results):
 def main():
 
     print("\n" + "=" * 60)
-    print("BTC/IRT SMART ANALYZER V3.1")
+    print("BTC/IRT SMART ANALYZER V3.6")
     print("=" * 60)
 
     results = {}
