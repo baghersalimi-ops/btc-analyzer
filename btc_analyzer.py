@@ -1309,6 +1309,7 @@ def main():
         print(f"MTF BREAKOUT   {final['breakout_mtf']}")
         print(f"MTF CONFIRM    {final['breakout_mtf_confirmations']}/3")
         print(f"BREAKOUT {breakout_quality['state']} {breakout_quality['score']}/100 ({breakout_quality['quality']})")
+        print("BREAKOUT READ  " + " | ".join(breakout_quality["reasons"]))
         print(f"ENTRY ENGINE   {entry['status']}")
         print(f"ENTRY STATE    {entry_state['state']}")
         print(f"ENTRY TRIGGER  {entry_state['trigger']}")
@@ -1401,6 +1402,41 @@ def breakout_quality_engine(results):
         reasons.append("LIMITED STRUCTURAL SPACE")
     else:
         reasons.append("POOR STRUCTURAL SPACE")
+
+    # V3.9 False Breakout + Candle Quality adjustment
+    fb = tf5.get("false_breakout", {})
+    fb_status = fb.get("status", "NO ACTIVE BREAKOUT")
+    close_position = fb.get("close_position", 0)
+
+    active_breakout = tf5["breakout"] in [
+        "VALID BREAKOUT",
+        "BREAKOUT - LOW VOLUME",
+        "RESISTANCE TEST"
+    ]
+
+    if active_breakout:
+        if fb_status == "BREAKOUT HOLDING":
+            score += 10
+            reasons.append("BREAKOUT HOLDING")
+        elif fb_status == "POSSIBLE FALSE BREAKOUT":
+            score -= 20
+            reasons.append("FALSE BREAKOUT RISK")
+        elif fb_status == "FALSE BREAKOUT":
+            score -= 40
+            reasons.append("FALSE BREAKOUT CONFIRMED")
+
+        if close_position >= 0.80:
+            score += 5
+            reasons.append("STRONG CANDLE CLOSE")
+        elif close_position >= 0.65:
+            score += 3
+            reasons.append("GOOD CANDLE CLOSE")
+        elif close_position > 0:
+            reasons.append("WEAK CANDLE CLOSE")
+    else:
+        reasons = ["NO ACTIVE BREAKOUT"]
+
+    score = max(0, min(100, score))
 
     if score >= 80:
         quality = "EXCELLENT"
