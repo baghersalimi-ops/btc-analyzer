@@ -842,6 +842,106 @@ def final_decision(results):
 
 
 
+def trade_setup_engine(results):
+    tf5 = results["5m"]
+    tf15 = results["15m"]
+    tf1h = results["1h"]
+
+    long_checks = []
+    short_checks = []
+    long_ready = True
+    short_ready = True
+
+    if tf1h["trend"] != "BULLISH":
+        long_ready = False
+        long_checks.append("1h NOT BULLISH")
+    else:
+        long_checks.append("1h BULLISH")
+
+    if tf15["trend"] != "BULLISH":
+        long_ready = False
+        long_checks.append("15m NOT BULLISH")
+    else:
+        long_checks.append("15m BULLISH")
+
+    if tf5["breakout"] != "VALID BREAKOUT":
+        long_ready = False
+        long_checks.append("5m NO VALID BREAKOUT")
+    else:
+        long_checks.append("5m VALID BREAKOUT")
+
+    if tf5["rsi"] >= 75:
+        long_ready = False
+        long_checks.append("5m RSI TOO HIGH")
+    else:
+        long_checks.append("5m RSI OK")
+
+    if tf5["next_tp1_status"] == "BLOCKED":
+        long_ready = False
+        long_checks.append("LONG TP1 BLOCKED")
+    else:
+        long_checks.append("LONG STRUCTURAL SPACE OK")
+
+    if tf5["entry_quality"] not in ["GOOD", "MEDIUM"]:
+        long_ready = False
+        long_checks.append("5m ENTRY QUALITY POOR")
+    else:
+        long_checks.append("5m ENTRY QUALITY OK")
+
+    if tf1h["trend"] != "BEARISH":
+        short_ready = False
+        short_checks.append("1h NOT BEARISH")
+    else:
+        short_checks.append("1h BEARISH")
+
+    if tf15["trend"] != "BEARISH":
+        short_ready = False
+        short_checks.append("15m NOT BEARISH")
+    else:
+        short_checks.append("15m BEARISH")
+
+    if tf5["price_action"] != "BREAKOUT DOWN":
+        short_ready = False
+        short_checks.append("5m NO DOWNSIDE BREAK")
+    else:
+        short_checks.append("5m DOWNSIDE BREAK")
+
+    if tf5["rsi"] >= 45:
+        short_ready = False
+        short_checks.append("5m RSI NOT WEAK ENOUGH")
+    else:
+        short_checks.append("5m RSI OK")
+
+    if tf5["distance_support"] < 0.30 and tf5["price_action"] != "BREAKOUT DOWN":
+        short_ready = False
+        short_checks.append("SHORT SUPPORT TOO CLOSE")
+    else:
+        short_checks.append("SHORT STRUCTURAL SPACE OK")
+
+    if long_ready:
+        plan = "LONG READY"
+        trigger = "5m VALID BREAKOUT + 15m/1h BULLISH"
+    elif short_ready:
+        plan = "SHORT READY"
+        trigger = "5m DOWNSIDE BREAK + 15m/1h BEARISH"
+    elif tf1h["trend"] == "BULLISH" and tf15["trend"] == "BULLISH":
+        plan = "LONG WATCH"
+        trigger = "WAIT FOR 5m VALID BREAKOUT"
+    elif tf1h["trend"] == "BEARISH" and tf15["trend"] == "BEARISH":
+        plan = "SHORT WATCH"
+        trigger = "WAIT FOR 5m DOWNSIDE BREAK"
+    else:
+        plan = "NO SETUP"
+        trigger = "WAIT FOR DIRECTION + ENTRY CONFIRMATION"
+
+    return {
+        "plan": plan,
+        "trigger": trigger,
+        "long_checks": long_checks,
+        "short_checks": short_checks
+    }
+
+
 def smart_entry_engine(results):
     tf5 = results["5m"]
     tf15 = results["15m"]
@@ -1113,6 +1213,7 @@ def main():
         final = final_decision(results)
         entry = smart_entry_engine(results)
         entry_state = entry_state_engine(results)
+        trade_setup = trade_setup_engine(results)
 
         print("\n" + "=" * 60)
         print("FINAL")
@@ -1132,6 +1233,10 @@ def main():
         print(f"ENTRY ENGINE   {entry['status']}")
         print(f"ENTRY STATE    {entry_state['state']}")
         print(f"ENTRY TRIGGER  {entry_state['trigger']}")
+        print("TRADE PLAN     " + trade_setup["plan"])
+        print("PLAN TRIGGER   " + trade_setup["trigger"])
+        print("LONG CHECK     " + " | ".join(trade_setup["long_checks"]))
+        print("SHORT CHECK    " + " | ".join(trade_setup["short_checks"]))
         print(f"RESISTANCE DIST {entry_state['distance_resistance']:.2f}%")
         if entry["reasons"]:
             print("ENTRY REASONS  " + " | ".join(entry["reasons"]))
