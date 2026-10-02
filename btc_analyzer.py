@@ -343,6 +343,7 @@ def analyze_timeframe(df, tf):
     next_res = next_resistance(df, levels["resistance"])
     action = detect_price_action(df)
     breakout = breakout_confirmation(df)
+    false_breakout = false_breakout_filter(df)
     momentum = retest_momentum(df)
     retest = breakout_retest(df)
 
@@ -412,6 +413,7 @@ def analyze_timeframe(df, tf):
         "trend": trend,
         "volatility": volatility,
         "breakout": breakout["status"],
+        "false_breakout": false_breakout,
         "retest_momentum": momentum["status"],
         "retest": retest["status"],
         "breakout_strength": breakout["strength"],
@@ -502,6 +504,79 @@ def breakout_confirmation(df):
         "breakout_distance": breakout_distance,
         "volume_ratio": volume_ratio
     }
+
+def false_breakout_filter(df):
+    if len(df) < 25:
+        return {
+            "status": "NO DATA",
+            "quality": "UNKNOWN",
+            "reason": "NOT ENOUGH DATA",
+            "volume_ratio": 0,
+            "close_position": 0
+        }
+
+    current = df.iloc[-1]
+    close = current["close"]
+    high = current["high"]
+    low = current["low"]
+    volume = current["volume"]
+
+    resistance = df["high"].iloc[-21:-1].max()
+
+    candle_range = high - low
+    if candle_range <= 0:
+        return {
+            "status": "NO ACTIVE BREAKOUT",
+            "quality": "NONE",
+            "reason": "ZERO CANDLE RANGE",
+            "volume_ratio": 0,
+            "close_position": 0
+        }
+
+    upper_wick = high - max(close, current["open"])
+    close_position = (close - low) / candle_range
+
+    volume_window = df["volume"].iloc[-11:-1]
+    avg_volume = volume_window.mean()
+    volume_ratio = volume / avg_volume if avg_volume > 0 else 0
+
+    strong_close = close_position >= 0.65
+    rejection = upper_wick / candle_range >= 0.35
+
+    current_above_resistance = close > resistance
+    previous_close = df.iloc[-2]["close"]
+    previous_above_resistance = previous_close > resistance
+
+    if current_above_resistance and strong_close and not rejection and volume_ratio >= 1.20:
+        status = "BREAKOUT HOLDING"
+        quality = "STRONG"
+        reason = "CLOSE STRONG + LOW REJECTION + VOLUME CONFIRMED"
+    elif current_above_resistance and volume_ratio < 1.20:
+        status = "POSSIBLE FALSE BREAKOUT"
+        quality = "WEAK"
+        reason = "BREAKOUT WITHOUT VOLUME CONFIRMATION"
+    elif current_above_resistance and rejection:
+        status = "POSSIBLE FALSE BREAKOUT"
+        quality = "WEAK"
+        reason = "STRONG UPPER WICK / REJECTION"
+    elif previous_above_resistance and close < resistance:
+        status = "FALSE BREAKOUT"
+        quality = "FAILED"
+        reason = "PRICE RETURNED BELOW BREAKOUT LEVEL"
+    else:
+        status = "NO ACTIVE BREAKOUT"
+        quality = "NONE"
+        reason = "PRICE NOT ABOVE RESISTANCE"
+
+    return {
+        "status": status,
+        "quality": quality,
+        "reason": reason,
+        "volume_ratio": volume_ratio,
+        "close_position": close_position
+    }
+
+
 def retest_momentum(df):
     if len(df) < 5:
         return {
@@ -1093,7 +1168,7 @@ def entry_state_engine(results):
 def main():
 
     print("\n" + "=" * 60)
-    print("BTC/IRT SMART ANALYZER V3.7")
+    print("BTC/IRT SMART ANALYZER V3.8")
     print("=" * 60)
 
     results = {}
@@ -1146,7 +1221,11 @@ def main():
             print(f"Price Action   {result['price_action']}")
             print("Retest         " + result["retest"])
             print("Momentum       " + result["retest_momentum"])
-            print(f"Breakout       {result['breakout']}")
+            print(f"Breakout       {result["breakout"]}")
+            fb = result.get("false_breakout", {})
+            print(f"False Breakout {fb.get("status", "N/A")}")
+            print(f"Breakout Qual. {fb.get("quality", "N/A")}")
+            print(f"FB Volume      {fb.get("volume_ratio", 0):.2f}x")
             print(f"Breakout Dist. {result['breakout_distance']:.2f}%")
             print(f"Breakout Vol.  {result['breakout_volume_ratio']:.2f}x")
             print(f"Breakout Str.  {result['breakout_strength']}/3")
