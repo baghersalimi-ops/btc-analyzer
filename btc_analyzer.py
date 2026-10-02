@@ -1093,7 +1093,7 @@ def entry_state_engine(results):
 def main():
 
     print("\n" + "=" * 60)
-    print("BTC/IRT SMART ANALYZER V3.6")
+    print("BTC/IRT SMART ANALYZER V3.7")
     print("=" * 60)
 
     results = {}
@@ -1235,6 +1235,18 @@ def main():
         print(f"ENTRY TRIGGER  {entry_state['trigger']}")
         print("TRADE PLAN     " + trade_setup["plan"])
         print("PLAN TRIGGER   " + trade_setup["trigger"])
+
+        if trade_setup["plan"] == "LONG WATCH":
+            trigger_price = results["5m"]["resistance"]
+            print(f"TRIGGER PRICE  > {trigger_price:,.0f}")
+            print("TRIGGER RULE   5m CLOSE ABOVE RESISTANCE")
+            print("TRIGGER VOLUME >= 1.20x")
+        elif trade_setup["plan"] == "SHORT WATCH":
+            trigger_price = results["5m"]["support"]
+            print(f"TRIGGER PRICE  < {trigger_price:,.0f}")
+            print("TRIGGER RULE   5m CLOSE BELOW SUPPORT")
+            print("TRIGGER VOLUME >= 1.20x")
+
         print("LONG CHECK     " + " | ".join(trade_setup["long_checks"]))
         print("SHORT CHECK    " + " | ".join(trade_setup["short_checks"]))
         print(f"RESISTANCE DIST {entry_state['distance_resistance']:.2f}%")
