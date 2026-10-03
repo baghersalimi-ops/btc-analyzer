@@ -1242,7 +1242,9 @@ def main():
     print(f"BITPIN IRT BALANCE {main_irt_balance:,.0f}")
 
     risk_pct = float(input("Risk % (e.g. 1): "))
+    capital_cap_pct = float(input("Max Capital Usage % (e.g. 50): "))
     risk_amount = main_irt_balance * risk_pct / 100
+    capital_cap_amount = main_irt_balance * capital_cap_pct / 100
     print(f"RISK AMOUNT    {risk_amount:,.0f} IRT")
 
     results = {}
@@ -1370,7 +1372,7 @@ def main():
         if entry_state["state"] == "ENTRY READY":
             sl_distance = abs(entry_state["entry_price"] - entry_state["long_sl"])
             position_btc_risk = risk_amount / sl_distance
-            max_position_btc = main_irt_balance / entry_state["entry_price"]
+            max_position_btc = min(main_irt_balance / entry_state["entry_price"], capital_cap_amount / entry_state["entry_price"])
             position_btc = min(position_btc_risk, max_position_btc)
             print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
             print(f"POSITION SIZE  {position_btc:.8f} BTC")
