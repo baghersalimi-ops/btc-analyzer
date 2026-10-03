@@ -284,8 +284,10 @@ def structural_tp(price, atr, current_resistance, next_resistance, mode):
 
     if mode == "PRE-BREAKOUT":
         structural_resistance = current_resistance
+        next_structural_resistance = next_resistance
     else:
         structural_resistance = next_resistance
+        next_structural_resistance = None
 
     if structural_resistance is None:
         return {
@@ -295,9 +297,9 @@ def structural_tp(price, atr, current_resistance, next_resistance, mode):
             "tp2_source": "ATR"
         }
 
-    structural_tp = structural_resistance * 0.997
+    structural_tp1 = structural_resistance * 0.997
 
-    if structural_tp <= price:
+    if structural_tp1 <= price:
         return {
             "tp1": price,
             "tp2": price,
@@ -305,14 +307,25 @@ def structural_tp(price, atr, current_resistance, next_resistance, mode):
             "tp2_source": "BLOCKED"
         }
 
-    tp1 = min(atr_tp1, structural_tp)
-    tp2 = min(atr_tp2, structural_tp)
+    tp1 = min(atr_tp1, structural_tp1)
+
+    if next_structural_resistance is not None:
+        structural_tp2 = next_structural_resistance * 0.997
+        if structural_tp2 > tp1:
+            tp2 = min(atr_tp2, structural_tp2)
+            tp2_source = "STRUCTURAL" if tp2 != atr_tp2 else "ATR"
+        else:
+            tp2 = atr_tp2
+            tp2_source = "ATR"
+    else:
+        tp2 = atr_tp2
+        tp2_source = "ATR"
 
     return {
         "tp1": tp1,
         "tp2": tp2,
         "tp1_source": "STRUCTURAL" if tp1 != atr_tp1 else "ATR",
-        "tp2_source": "STRUCTURAL" if tp2 != atr_tp2 else "ATR"
+        "tp2_source": tp2_source
     }
 
 def smart_tp_mode(breakout_status):
@@ -1361,7 +1374,15 @@ def main():
             position_btc = min(position_btc_risk, max_position_btc)
             print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
             print(f"POSITION SIZE  {position_btc:.8f} BTC")
+            position_value = position_btc * entry_state["entry_price"]
+            actual_risk = position_btc * sl_distance
+            actual_risk_pct = (actual_risk / main_irt_balance) * 100 if main_irt_balance > 0 else 0
+            capital_usage_pct = (position_value / main_irt_balance) * 100 if main_irt_balance > 0 else 0
             print(f"MAX POSITION   {max_position_btc:.8f} BTC")
+            print(f"POSITION VALUE {position_value:,.0f} IRT")
+            print(f"ACTUAL RISK    {actual_risk:,.0f} IRT")
+            print(f"ACTUAL RISK %  {actual_risk_pct:.2f}%")
+            print(f"CAPITAL USAGE  {capital_usage_pct:.2f}%")
         trade_setup = trade_setup_engine(results)
 
         print("\n" + "=" * 60)
