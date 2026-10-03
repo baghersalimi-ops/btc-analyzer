@@ -1228,6 +1228,10 @@ def main():
 
     print(f"BITPIN IRT BALANCE {main_irt_balance:,.0f}")
 
+    risk_pct = float(input("Risk % (e.g. 1): "))
+    risk_amount = main_irt_balance * risk_pct / 100
+    print(f"RISK AMOUNT    {risk_amount:,.0f} IRT")
+
     results = {}
 
     for tf in TIMEFRAMES:
@@ -1349,6 +1353,15 @@ def main():
         final = final_decision(results)
         entry = smart_entry_engine(results)
         entry_state = entry_state_engine(results)
+
+        if entry_state["state"] == "ENTRY READY":
+            sl_distance = abs(entry_state["entry_price"] - entry_state["long_sl"])
+            position_btc_risk = risk_amount / sl_distance
+            max_position_btc = main_irt_balance / entry_state["entry_price"]
+            position_btc = min(position_btc_risk, max_position_btc)
+            print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
+            print(f"POSITION SIZE  {position_btc:.8f} BTC")
+            print(f"MAX POSITION   {max_position_btc:.8f} BTC")
         trade_setup = trade_setup_engine(results)
 
         print("\n" + "=" * 60)
