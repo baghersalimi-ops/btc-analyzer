@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import numpy as np
 import time
+import os
 
 BASE_URL = "https://api.bitpin.org"
 SYMBOL = "BTC_IRT"
@@ -12,6 +13,44 @@ TIMEFRAMES = {
     "15m": {"seconds": 900, "weight": 3},
     "1h": {"seconds": 3600, "weight": 4},
 }
+
+def get_bitpin_access_token(api_key, secret_key):
+    url = f"{BASE_URL}/api/v1/usr/authenticate/"
+    payload = {
+        "api_key": api_key,
+        "secret_key": secret_key
+    }
+
+    r = requests.post(url, json=payload, timeout=20)
+    r.raise_for_status()
+    data = r.json()
+
+    return data["access"]
+
+
+def get_bitpin_wallets(access_token):
+    url = f"{BASE_URL}/api/v1/wlt/wallets/"
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+
+    r = requests.get(url, headers=headers, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_main_irt_balance(wallets):
+    for wallet in wallets:
+        if (
+            wallet.get("asset") == "IRT"
+            and wallet.get("service") == "main"
+        ):
+            balance = float(wallet.get("balance", 0))
+            frozen = float(wallet.get("frozen", 0))
+            return max(balance - frozen, 0.0)
+
+    return 0.0
+
 
 def get_candles(resolution, limit=500):
     now = int(time.time())
@@ -1176,6 +1215,18 @@ def main():
     print("\n" + "=" * 60)
     print("BTC/IRT SMART ANALYZER V3.8")
     print("=" * 60)
+
+    api_key = os.getenv("BITPIN_API_KEY")
+    secret_key = os.getenv("BITPIN_SECRET_KEY")
+
+    if not api_key or not secret_key:
+        raise SystemExit("Bitpin API credentials not found in environment.")
+
+    access_token = get_bitpin_access_token(api_key, secret_key)
+    wallets = get_bitpin_wallets(access_token)
+    main_irt_balance = get_main_irt_balance(wallets)
+
+    print(f"BITPIN IRT BALANCE {main_irt_balance:,.0f}")
 
     results = {}
 
