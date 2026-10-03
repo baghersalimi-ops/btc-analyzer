@@ -458,7 +458,7 @@ def breakout_confirmation(df):
         }
 
     current = df.iloc[-1]
-    previous = df.iloc[-21:-1]
+    previous = df.iloc[-51:-1]
 
     previous_resistance = previous["high"].max()
     previous_volume = previous["volume"].iloc[-10:].mean()
