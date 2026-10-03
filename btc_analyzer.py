@@ -1380,6 +1380,10 @@ def main():
             actual_risk = position_btc * sl_distance
             actual_risk_pct = (actual_risk / main_irt_balance) * 100 if main_irt_balance > 0 else 0
             capital_usage_pct = (position_value / main_irt_balance) * 100 if main_irt_balance > 0 else 0
+            print(f"RISK TARGET    {risk_pct:.2f}%")
+            print(f"CAPITAL CAP    {capital_cap_pct:.2f}%")
+            print(f"CAPITAL LIMIT  {capital_cap_amount:,.0f} IRT")
+            print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
             print(f"MAX POSITION   {max_position_btc:.8f} BTC")
             print(f"POSITION VALUE {position_value:,.0f} IRT")
             print(f"ACTUAL RISK    {actual_risk:,.0f} IRT")
