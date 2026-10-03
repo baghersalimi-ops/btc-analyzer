@@ -1161,7 +1161,13 @@ def entry_state_engine(results):
     return {
         "state": state,
         "trigger": trigger,
-        "distance_resistance": distance_resistance
+        "distance_resistance": distance_resistance,
+        "entry_price": tf5["price"],
+        "long_sl": tf5["long_sl"],
+        "long_tp1": tf5["smart_tp1"],
+        "long_tp2": tf5["smart_tp2"],
+        "long_rr_tp1": tf5["long_rr_tp1"],
+        "long_rr_tp2": tf5["long_rr_tp2"]
     }
 
 
@@ -1313,6 +1319,14 @@ def main():
         print(f"ENTRY ENGINE   {entry['status']}")
         print(f"ENTRY STATE    {entry_state['state']}")
         print(f"ENTRY TRIGGER  {entry_state['trigger']}")
+
+        if entry_state["state"] == "ENTRY READY":
+            print(f"ENTRY PRICE    {entry_state['entry_price']:,.0f}")
+            print(f"LONG SL        {entry_state['long_sl']:,.0f}")
+            print(f"LONG TP1       {entry_state['long_tp1']:,.0f}")
+            print(f"LONG TP2       {entry_state['long_tp2']:,.0f}")
+            print(f"RR TP1        1:{entry_state['long_rr_tp1']:.2f}")
+            print(f"RR TP2        1:{entry_state['long_rr_tp2']:.2f}")
         print("TRADE PLAN     " + trade_setup["plan"])
         print("PLAN TRIGGER   " + trade_setup["trigger"])
 
