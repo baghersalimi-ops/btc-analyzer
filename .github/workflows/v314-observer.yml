@@ -1,0 +1,53 @@
+name: V3.14 Live Observer
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: "Number of market snapshots"
+        required: false
+        default: "12"
+      interval:
+        description: "Seconds between snapshots"
+        required: false
+        default: "300"
+  schedule:
+    - cron: "17 */2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout V3.14 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v3.14-pullback-trade-plan
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas numpy
+
+      - name: Run V3.14 observer
+        env:
+          OBS_SAMPLES: ${{ github.event.inputs.samples || '12' }}
+          OBS_INTERVAL: ${{ github.event.inputs.interval || '300' }}
+        run: |
+          python observer.py --samples "$OBS_SAMPLES" --interval "$OBS_INTERVAL" --output observer_results.csv
+
+      - name: Upload observer results
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3.14-observer-results-${{ github.run_number }}
+          path: observer_results.csv
+          retention-days: 30
