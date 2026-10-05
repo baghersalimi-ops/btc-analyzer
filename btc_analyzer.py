@@ -763,71 +763,75 @@ def breakout_retest(df):
         "distance": distance
     }
 
-def pullback_entry_engine(results):
-    tf5 = results["5m"]
+def pullback_structure_engine(results):
+    """
+    V3.14 Pullback detection layer.
+    Identifies the pullback structure only; no entry or trade-plan decision.
+    """
     tf15 = results["15m"]
-    tf1h = results["1h"]
 
-    checks = []
-
-    # Higher timeframe trend
     htf_ok = (
-        tf1h["trend"] == "BULLISH"
+        results["1h"]["trend"] == "BULLISH"
         and tf15["trend"] == "BULLISH"
     )
 
-    if htf_ok:
-        checks.append("1h/15m BULLISH")
-    else:
-        checks.append("HTF NOT BULLISH")
-
-    # 15m pullback structure
     pullback_ok = (
         tf15["pullback"] == "POSSIBLE BULLISH PULLBACK"
         or tf15["price_action"] == "NEAR SUPPORT"
     )
 
-    if pullback_ok:
-        checks.append("15m PULLBACK/SUPPORT OK")
+    if htf_ok and pullback_ok:
+        status = "PULLBACK STRUCTURE CONFIRMED"
+    elif htf_ok:
+        status = "PULLBACK STRUCTURE WATCH"
     else:
-        checks.append("15m PULLBACK NOT CONFIRMED")
+        status = "NO BULLISH PULLBACK STRUCTURE"
 
-    # 5m momentum
+    return {
+        "status": status,
+        "htf_ok": htf_ok,
+        "pullback_ok": pullback_ok,
+        "reasons": [
+            "1h/15m BULLISH" if htf_ok else "HTF NOT BULLISH",
+            "15m PULLBACK/SUPPORT OK" if pullback_ok else "15m PULLBACK/SUPPORT NOT CONFIRMED",
+        ],
+    }
+
+
+def pullback_entry_engine(results):
+    """
+    V3.14 Pullback confirmation layer.
+    Converts a detected pullback structure into an entry decision.
+    """
+    tf5 = results["5m"]
+    structure = pullback_structure_engine(results)
+
+    checks = list(structure["reasons"])
+
+    htf_ok = structure["htf_ok"]
+    pullback_ok = structure["pullback_ok"]
+
     momentum_ok = (
         tf5["rsi"] > 50
         and tf5["macd"] > tf5["macd_signal"]
     )
+    checks.append("5m MOMENTUM OK" if momentum_ok else "5m MOMENTUM WEAK")
 
-    if momentum_ok:
-        checks.append("5m MOMENTUM OK")
-    else:
-        checks.append("5m MOMENTUM WEAK")
-
-    # Price above EMA20
     ema_ok = tf5["price"] > tf5["ema20"]
+    checks.append("5m ABOVE EMA20" if ema_ok else "5m BELOW EMA20")
 
-    if ema_ok:
-        checks.append("5m ABOVE EMA20")
-    else:
-        checks.append("5m BELOW EMA20")
-
-    # RSI safety
     rsi_ok = tf5["rsi"] < 75
+    checks.append("5m RSI OK" if rsi_ok else "5m RSI TOO HIGH")
 
-    if rsi_ok:
-        checks.append("5m RSI OK")
-    else:
-        checks.append("5m RSI TOO HIGH")
+    structural_ok = tf5["next_tp1_status"] != "BLOCKED"
+    checks.append("STRUCTURAL SPACE OK" if structural_ok else "STRUCTURAL SPACE BLOCKED")
 
-    # Structural space
-    structural_ok = (
-        tf5["next_tp1_status"] != "BLOCKED"
+    entry_quality_ok = tf5["entry_quality"] in ["GOOD", "MEDIUM"]
+    checks.append(
+        "5m ENTRY QUALITY OK"
+        if entry_quality_ok
+        else "5m ENTRY QUALITY POOR"
     )
-
-    if structural_ok:
-        checks.append("STRUCTURAL SPACE OK")
-    else:
-        checks.append("STRUCTURAL SPACE BLOCKED")
 
     confirmations = sum([
         htf_ok,
@@ -835,20 +839,23 @@ def pullback_entry_engine(results):
         momentum_ok,
         ema_ok,
         rsi_ok,
-        structural_ok
+        structural_ok,
+        entry_quality_ok,
     ])
 
-    if (
-        htf_ok
-        and pullback_ok
-        and momentum_ok
-        and ema_ok
-        and rsi_ok
-        and structural_ok
-        and tf5["entry_quality"] in ["GOOD", "MEDIUM"]
-    ):
+    all_confirmed = all([
+        htf_ok,
+        pullback_ok,
+        momentum_ok,
+        ema_ok,
+        rsi_ok,
+        structural_ok,
+        entry_quality_ok,
+    ])
+
+    if all_confirmed:
         status = "PULLBACK ENTRY READY"
-    elif htf_ok and confirmations >= 4:
+    elif htf_ok and pullback_ok and confirmations >= 5:
         status = "PULLBACK WATCH"
     else:
         status = "NO PULLBACK ENTRY"
@@ -856,8 +863,11 @@ def pullback_entry_engine(results):
     return {
         "status": status,
         "confirmations": confirmations,
-        "checks": checks
+        "total_confirmations": 7,
+        "checks": checks,
+        "structure_status": structure["status"],
     }
+
 
 def pullback_trade_plan_engine(results):
     """
