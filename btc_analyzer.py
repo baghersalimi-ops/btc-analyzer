@@ -1568,6 +1568,35 @@ def final_route_engine(route_decision, trade_plan):
     }
 
 
+def final_route_self_test():
+    """
+    V3.14 integration tests for route arbitration and final route gate.
+    No API/network calls.
+    """
+    cases = [
+        ("WAIT", "WAIT", False),
+        ("PULLBACK READY", "PULLBACK", True),
+        ("PULLBACK PLAN FAIL", "PULLBACK", False),
+        ("BREAKOUT READY", "BREAKOUT", True),
+        ("RETEST WINS", "RETEST", True),
+    ]
+
+    for name, route, has_plan in cases:
+        decision = {
+            "route": route,
+            "reason": name,
+        }
+        plan = {"state": "ENTRY READY"} if has_plan else None
+        result = final_route_engine(decision, plan)
+
+        expected_action = "ENTRY READY" if has_plan else "WAIT"
+        assert result["route"] == route
+        assert result["action"] == expected_action
+        assert result["ready"] == has_plan
+
+    return "PASS"
+
+
 def route_priority_self_test():
     """
     V3.14 deterministic tests for route arbitration.
