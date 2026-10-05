@@ -1489,6 +1489,54 @@ def entry_state_engine(results):
     }
 
 
+def route_priority_engine(results, entry_state, pullback_entry):
+    """
+    V3.14 route arbitration.
+    Priority: Retest > Breakout > Pullback.
+    Only one route may become the active trade route.
+    """
+    tf5 = results["5m"]
+
+    retest_ready = (
+        entry_state["state"] == "ENTRY READY"
+        and tf5["retest"] == "RETEST CONFIRMED"
+        and tf5["retest_momentum"] == "MOMENTUM CONFIRMED"
+    )
+
+    breakout_ready = (
+        entry_state["state"] == "ENTRY READY"
+        and tf5["breakout"] == "VALID BREAKOUT"
+        and multi_tf_breakout_confirmation(results)["status"]
+        == "MULTI-TF BREAKOUT CONFIRMED"
+        and not retest_ready
+    )
+
+    pullback_ready = (
+        pullback_entry["status"] == "PULLBACK ENTRY READY"
+    )
+
+    if retest_ready:
+        route = "RETEST"
+        reason = "RETEST CONFIRMED + MOMENTUM CONFIRMED"
+    elif breakout_ready:
+        route = "BREAKOUT"
+        reason = "VALID BREAKOUT + MTF CONFIRMATION"
+    elif pullback_ready:
+        route = "PULLBACK"
+        reason = "PULLBACK CONFIRMED + ENTRY CONDITIONS PASSED"
+    else:
+        route = "WAIT"
+        reason = "NO ACTIVE TRADE ROUTE"
+
+    return {
+        "route": route,
+        "reason": reason,
+        "retest_ready": retest_ready,
+        "breakout_ready": breakout_ready,
+        "pullback_ready": pullback_ready,
+    }
+
+
 def pullback_position_sizing(trade_plan, balance, risk_pct, capital_cap_pct):
     """
     V3.14 Pullback route position sizing.
@@ -1756,11 +1804,22 @@ def main(risk_pct=None, capital_cap_pct=None):
             print(f"R/R TP1        1:{pullback_trade_plan['rr_tp1']:.2f}")
             print(f"R/R TP2        1:{pullback_trade_plan['rr_tp2']:.2f}")
 
+        route_decision = route_priority_engine(
+            results,
+            entry_state,
+            pullback_entry,
+        )
+
+        print("\nROUTE ARBITRATION")
+        print("-" * 60)
+        print(f"ACTIVE ROUTE   {route_decision['route']}")
+        print(f"REASON         {route_decision['reason']}")
+
         trade_plan = None
         pullback_sizing = None
 
-        # Breakout/Retest route keeps its original position sizing.
-        if entry_state["state"] == "ENTRY READY":
+        # Only the selected route is allowed to create an active trade plan.
+        if route_decision["route"] in ["BREAKOUT", "RETEST"]:
             sl_distance = abs(entry_state["entry_price"] - entry_state["long_sl"])
             if sl_distance > 0:
                 position_btc_risk = risk_amount / sl_distance
@@ -1809,7 +1868,7 @@ def main(risk_pct=None, capital_cap_pct=None):
                 print(f"CAPITAL USAGE     {capital_usage_pct:.2f}%")
 
         # Pullback route has its own plan and sizing.
-        if pullback_trade_plan["state"] == "PULLBACK ENTRY READY":
+        if route_decision["route"] == "PULLBACK":
             pullback_sizing = pullback_position_sizing(
                 pullback_trade_plan,
                 main_irt_balance,
