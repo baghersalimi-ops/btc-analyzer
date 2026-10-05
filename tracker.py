@@ -83,6 +83,7 @@ def make_signal_id(route, plan):
             f"{float(plan['stop_loss']):.2f}",
             f"{float(plan['tp1']):.2f}",
             f"{float(plan['tp2']):.2f}",
+            utc_now(),
         ]
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -272,10 +273,21 @@ def main():
     )
 
     if ready:
-        signal = new_signal(route["route"], plan)
-        existing_ids = {row["signal_id"] for row in rows}
+        open_match = any(
+            row["route"] == route["route"]
+            and row["status"] in {
+                "OPEN",
+                "TP1_HIT_OPEN",
+            }
+            and abs(float(row["entry"]) - float(plan["entry"])) < 0.01
+            and abs(float(row["stop_loss"]) - float(plan["stop_loss"])) < 0.01
+            and abs(float(row["tp1"]) - float(plan["tp1"])) < 0.01
+            and abs(float(row["tp2"]) - float(plan["tp2"])) < 0.01
+            for row in rows
+        )
 
-        if signal["signal_id"] not in existing_ids:
+        if not open_match:
+            signal = new_signal(route["route"], plan)
             rows.append(signal)
             print(
                 f"NEW SIGNAL | ROUTE={signal['route']} | "
@@ -285,7 +297,7 @@ def main():
                 f"TP2={float(signal['tp2']):,.0f}"
             )
         else:
-            print(f"SIGNAL ALREADY TRACKED | ROUTE={route['route']}")
+            print(f"SIGNAL ALREADY OPEN | ROUTE={route['route']}")
     else:
         print(f"NO NEW SIGNAL | ROUTE={route['route']}")
 
