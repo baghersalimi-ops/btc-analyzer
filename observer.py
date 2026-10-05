@@ -68,7 +68,7 @@ def main():
         raise SystemExit("--samples must be >= 1")
 
     # Deterministic tests: no API/network dependency.
-    assert analyzer.route_realistic_self_test()["status"] == "PASS"
+    assert analyzer.route_realistic_self_test() == "PASS"
 
     rows = []
     for i in range(args.samples):
