@@ -884,9 +884,26 @@ def pullback_trade_plan_engine(results):
         }
 
     entry = tf5["price"]
+    atr = tf5["atr"]
 
-    support = min(tf5["support"], tf15["support"])
-    stop_loss = support - (0.5 * tf5["atr"])
+    if atr <= 0:
+        return {
+            "state": "PULLBACK INVALID",
+            "trigger": "INVALID ATR",
+            "entry": entry,
+            "stop_loss": None,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": ["ATR INVALID"],
+        }
+
+    # Use the closer of the 5m/15m structural supports as the pullback anchor.
+    # The stop is placed below that support with an ATR buffer.
+    support = max(tf5["support"], tf15["support"])
+    stop_loss = support - (0.5 * atr)
     sl_distance = entry - stop_loss
 
     if sl_distance <= 0:
@@ -900,10 +917,10 @@ def pullback_trade_plan_engine(results):
             "rr_tp1": 0,
             "rr_tp2": 0,
             "risk_filter": "FAILED",
-            "reasons": ["STOP ABOVE ENTRY"],
+            "reasons": ["STOP ABOVE OR AT ENTRY"],
         }
 
-    risk_atr_ratio = sl_distance / tf5["atr"] if tf5["atr"] > 0 else float("inf")
+    risk_atr_ratio = sl_distance / atr
 
     if risk_atr_ratio > 2.50:
         return {
@@ -919,12 +936,13 @@ def pullback_trade_plan_engine(results):
             "reasons": [f"SL DISTANCE {risk_atr_ratio:.2f} ATR > 2.50 ATR"],
         }
 
-    tp1_candidates = [
+    # TP1 = nearest structural resistance above entry.
+    resistance_candidates = [
         level for level in [tf5["resistance"], tf5["next_resistance"]]
         if level is not None and level > entry
     ]
 
-    if not tp1_candidates:
+    if not resistance_candidates:
         return {
             "state": "PULLBACK INVALID",
             "trigger": "NO STRUCTURAL TP1",
@@ -938,19 +956,38 @@ def pullback_trade_plan_engine(results):
             "reasons": ["NO RESISTANCE ABOVE ENTRY"],
         }
 
-    tp1 = min(tp1_candidates)
+    nearest_resistance = min(resistance_candidates)
+    tp1 = nearest_resistance * 0.997
 
-    higher_candidates = [
-        level for level in [tf5["next_resistance"]]
-        if level is not None and level > tp1
-    ]
-
-    fallback_tp2 = entry + (3.0 * sl_distance)
-    tp2 = max(higher_candidates) if higher_candidates else fallback_tp2
+    if tp1 <= entry:
+        return {
+            "state": "PULLBACK INVALID",
+            "trigger": "TP1 BLOCKED",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": tp1,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": ["TP1 FALLS AT OR BELOW ENTRY"],
+        }
 
     rr_tp1 = (tp1 - entry) / sl_distance
+
+    # TP2 = next structural resistance, capped at 3R.
+    next_res = tf5["next_resistance"]
+    fallback_tp2 = entry + (3.0 * sl_distance)
+
+    if next_res is not None and next_res > tp1:
+        structural_tp2 = next_res * 0.997
+        tp2 = min(structural_tp2, fallback_tp2)
+    else:
+        tp2 = fallback_tp2
+
     rr_tp2 = (tp2 - entry) / sl_distance
 
+    # A pullback trade must have at least 1R available to the first target.
     if rr_tp1 < 1.00:
         return {
             "state": "PULLBACK INVALID",
@@ -962,6 +999,7 @@ def pullback_trade_plan_engine(results):
             "rr_tp1": rr_tp1,
             "rr_tp2": rr_tp2,
             "risk_filter": "FAILED",
+            "risk_atr_ratio": risk_atr_ratio,
             "reasons": [f"TP1 R/R {rr_tp1:.2f} < 1.00"],
         }
 
@@ -978,6 +1016,7 @@ def pullback_trade_plan_engine(results):
         "risk_atr_ratio": risk_atr_ratio,
         "reasons": entry_check["checks"],
     }
+
 
 def pullback_confirmation(results):
     tf5 = results["5m"]
