@@ -22,8 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout default branch
+      - name: Checkout V3.14 branch
         uses: actions/checkout@v4
+        with:
+          ref: v3.14-pullback-trade-plan
 
       - name: Set up Python
         uses: actions/setup-python@v5
