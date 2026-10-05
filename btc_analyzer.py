@@ -1759,6 +1759,56 @@ def main(risk_pct=None, capital_cap_pct=None):
         trade_plan = None
         pullback_sizing = None
 
+        # Breakout/Retest route keeps its original position sizing.
+        if entry_state["state"] == "ENTRY READY":
+            sl_distance = abs(entry_state["entry_price"] - entry_state["long_sl"])
+            if sl_distance > 0:
+                position_btc_risk = risk_amount / sl_distance
+                position_btc_cap = capital_cap_amount / entry_state["entry_price"]
+                position_btc_balance = main_irt_balance / entry_state["entry_price"]
+                max_position_btc = min(position_btc_cap, position_btc_balance)
+                position_btc = min(position_btc_risk, max_position_btc)
+
+                if position_btc == position_btc_risk:
+                    position_limit = "RISK LIMIT"
+                elif position_btc == position_btc_cap:
+                    position_limit = "CAPITAL CAP"
+                else:
+                    position_limit = "AVAILABLE BALANCE"
+
+                position_value = position_btc * entry_state["entry_price"]
+                actual_risk = position_btc * sl_distance
+                actual_risk_pct = (
+                    actual_risk / main_irt_balance * 100
+                    if main_irt_balance > 0 else 0
+                )
+                capital_usage_pct = (
+                    position_value / main_irt_balance * 100
+                    if main_irt_balance > 0 else 0
+                )
+
+                trade_plan = trade_plan_engine(
+                    entry_state,
+                    position_btc,
+                    position_value,
+                    actual_risk,
+                    actual_risk_pct,
+                    capital_usage_pct,
+                    risk_pct,
+                    capital_cap_pct,
+                )
+
+                print("\nBREAKOUT/RETEST POSITION SIZING")
+                print("-" * 60)
+                print(f"SL DISTANCE       {sl_distance:,.0f} IRT")
+                print(f"POSITION SIZE     {position_btc:.8f} BTC")
+                print(f"POSITION LIMIT    {position_limit}")
+                print(f"POSITION VALUE    {position_value:,.0f} IRT")
+                print(f"ACTUAL RISK       {actual_risk:,.0f} IRT")
+                print(f"ACTUAL RISK %     {actual_risk_pct:.2f}%")
+                print(f"CAPITAL USAGE     {capital_usage_pct:.2f}%")
+
+        # Pullback route has its own plan and sizing.
         if pullback_trade_plan["state"] == "PULLBACK ENTRY READY":
             pullback_sizing = pullback_position_sizing(
                 pullback_trade_plan,
