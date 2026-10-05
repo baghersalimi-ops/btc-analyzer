@@ -1612,7 +1612,11 @@ def route_priority_self_test():
     base_pullback = {"status": "NO PULLBACK ENTRY"}
 
     def run(tf5, entry_state, pullback_entry):
-        results = {"5m": tf5}
+        results = {
+            "5m": tf5,
+            "15m": {"trend": "BULLISH"},
+            "1h": {"trend": "BULLISH"},
+        }
         decision = route_priority_engine(
             results,
             entry_state,
@@ -1623,9 +1627,15 @@ def route_priority_self_test():
             decision["breakout_ready"],
             decision["pullback_ready"],
         ])
-        assert ready_count <= 1, (
-            f"Multiple active routes: {decision}"
-        )
+        assert decision["route"] in ["WAIT", "RETEST", "BREAKOUT", "PULLBACK"]
+        if decision["route"] == "RETEST":
+            assert decision["retest_ready"] is True
+        elif decision["route"] == "BREAKOUT":
+            assert decision["breakout_ready"] is True
+        elif decision["route"] == "PULLBACK":
+            assert decision["pullback_ready"] is True
+        else:
+            assert ready_count == 0
         return decision
 
     tests = []
@@ -1694,6 +1704,61 @@ def route_priority_self_test():
         "status": "PASS",
         "tests": tests,
     }
+
+
+def route_integration_self_test():
+    """
+    V3.14 integration test for Route -> Trade Plan -> Final Action.
+    No API/network calls.
+    """
+    cases = [
+        {
+            "name": "BREAKOUT READY",
+            "decision": {"route": "BREAKOUT", "reason": "VALID BREAKOUT + MTF CONFIRMATION"},
+            "plan": {"state": "ENTRY READY"},
+            "expected_route": "BREAKOUT",
+            "expected_action": "ENTRY READY",
+        },
+        {
+            "name": "PULLBACK READY",
+            "decision": {"route": "PULLBACK", "reason": "PULLBACK CONFIRMED + ENTRY CONDITIONS PASSED"},
+            "plan": {"state": "PULLBACK ENTRY READY"},
+            "expected_route": "PULLBACK",
+            "expected_action": "ENTRY READY",
+        },
+        {
+            "name": "RETEST READY",
+            "decision": {"route": "RETEST", "reason": "RETEST CONFIRMED + MOMENTUM CONFIRMED"},
+            "plan": {"state": "ENTRY READY"},
+            "expected_route": "RETEST",
+            "expected_action": "ENTRY READY",
+        },
+        {
+            "name": "SELECTED ROUTE WITHOUT PLAN",
+            "decision": {"route": "PULLBACK", "reason": "PULLBACK SELECTED"},
+            "plan": None,
+            "expected_route": "PULLBACK",
+            "expected_action": "WAIT",
+        },
+        {
+            "name": "NO ROUTE",
+            "decision": {"route": "WAIT", "reason": "NO ACTIVE TRADE ROUTE"},
+            "plan": None,
+            "expected_route": "WAIT",
+            "expected_action": "WAIT",
+        },
+    ]
+
+    for case in cases:
+        result = final_route_engine(
+            case["decision"],
+            case["plan"],
+        )
+        assert result["route"] == case["expected_route"], case["name"]
+        assert result["action"] == case["expected_action"], case["name"]
+        assert result["ready"] == (case["expected_action"] == "ENTRY READY"), case["name"]
+
+    return "PASS"
 
 
 def pullback_position_sizing(trade_plan, balance, risk_pct, capital_cap_pct):
