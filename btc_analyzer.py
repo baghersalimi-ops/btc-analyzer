@@ -22,6 +22,7 @@ def get_bitpin_access_token(api_key, secret_key):
     }
 
     r = requests.post(url, json=payload, timeout=20)
+    print("BITPIN AUTH RESPONSE:", r.status_code, r.text)
     r.raise_for_status()
     data = r.json()
 
@@ -762,6 +763,101 @@ def breakout_retest(df):
         "distance": distance
     }
 
+def pullback_entry_engine(results):
+    tf5 = results["5m"]
+    tf15 = results["15m"]
+    tf1h = results["1h"]
+
+    checks = []
+
+    # Higher timeframe trend
+    htf_ok = (
+        tf1h["trend"] == "BULLISH"
+        and tf15["trend"] == "BULLISH"
+    )
+
+    if htf_ok:
+        checks.append("1h/15m BULLISH")
+    else:
+        checks.append("HTF NOT BULLISH")
+
+    # 15m pullback structure
+    pullback_ok = (
+        tf15["pullback"] == "POSSIBLE BULLISH PULLBACK"
+        or tf15["price_action"] == "NEAR SUPPORT"
+    )
+
+    if pullback_ok:
+        checks.append("15m PULLBACK/SUPPORT OK")
+    else:
+        checks.append("15m PULLBACK NOT CONFIRMED")
+
+    # 5m momentum
+    momentum_ok = (
+        tf5["rsi"] > 50
+        and tf5["macd"] > tf5["macd_signal"]
+    )
+
+    if momentum_ok:
+        checks.append("5m MOMENTUM OK")
+    else:
+        checks.append("5m MOMENTUM WEAK")
+
+    # Price above EMA20
+    ema_ok = tf5["price"] > tf5["ema20"]
+
+    if ema_ok:
+        checks.append("5m ABOVE EMA20")
+    else:
+        checks.append("5m BELOW EMA20")
+
+    # RSI safety
+    rsi_ok = tf5["rsi"] < 75
+
+    if rsi_ok:
+        checks.append("5m RSI OK")
+    else:
+        checks.append("5m RSI TOO HIGH")
+
+    # Structural space
+    structural_ok = (
+        tf5["next_tp1_status"] != "BLOCKED"
+    )
+
+    if structural_ok:
+        checks.append("STRUCTURAL SPACE OK")
+    else:
+        checks.append("STRUCTURAL SPACE BLOCKED")
+
+    confirmations = sum([
+        htf_ok,
+        pullback_ok,
+        momentum_ok,
+        ema_ok,
+        rsi_ok,
+        structural_ok
+    ])
+
+    if (
+        htf_ok
+        and pullback_ok
+        and momentum_ok
+        and ema_ok
+        and rsi_ok
+        and structural_ok
+        and tf5["entry_quality"] in ["GOOD", "MEDIUM"]
+    ):
+        status = "PULLBACK ENTRY READY"
+    elif htf_ok and confirmations >= 4:
+        status = "PULLBACK WATCH"
+    else:
+        status = "NO PULLBACK ENTRY"
+
+    return {
+        "status": status,
+        "confirmations": confirmations,
+        "checks": checks
+    }
 def pullback_confirmation(results):
     tf5 = results["5m"]
     tf15 = results["15m"]
@@ -1223,10 +1319,28 @@ def entry_state_engine(results):
     }
 
 
-def main():
+def trade_plan_engine(entry_state, position_btc, position_value, actual_risk, actual_risk_pct, capital_usage_pct, risk_pct, capital_cap_pct):
+    return {
+        "state": entry_state["state"],
+        "trigger": entry_state["trigger"],
+        "entry": entry_state["entry_price"],
+        "stop_loss": entry_state["long_sl"],
+        "tp1": entry_state["long_tp1"],
+        "tp2": entry_state["long_tp2"],
+        "rr_tp1": entry_state["long_rr_tp1"],
+        "rr_tp2": entry_state["long_rr_tp2"],
+        "position_btc": position_btc,
+        "position_value": position_value,
+        "risk_target_pct": risk_pct,
+        "actual_risk": actual_risk,
+        "actual_risk_pct": actual_risk_pct,
+        "capital_cap_pct": capital_cap_pct,
+        "capital_usage_pct": capital_usage_pct,
+    }
 
+def main(risk_pct=None, capital_cap_pct=None):
     print("\n" + "=" * 60)
-    print("BTC/IRT SMART ANALYZER V3.8")
+    print("BTC/IRT SMART ANALYZER V3.13")
     print("=" * 60)
 
     api_key = os.getenv("BITPIN_API_KEY")
@@ -1241,13 +1355,17 @@ def main():
 
     print(f"BITPIN IRT BALANCE {main_irt_balance:,.0f}")
 
-    risk_pct = float(input("Risk % (e.g. 1): "))
-    capital_cap_pct = float(input("Max Capital Usage % (e.g. 50): "))
+    if risk_pct is None:
+        risk_pct = float(input("Risk % (e.g. 1): "))
+    if capital_cap_pct is None:
+        capital_cap_pct = float(input("Max Capital Usage % (e.g. 50): "))
     risk_amount = main_irt_balance * risk_pct / 100
     capital_cap_amount = main_irt_balance * capital_cap_pct / 100
     print(f"RISK AMOUNT    {risk_amount:,.0f} IRT")
 
     results = {}
+    entry_state = None
+    trade_plan = None
 
     for tf in TIMEFRAMES:
 
@@ -1368,27 +1486,68 @@ def main():
         final = final_decision(results)
         entry = smart_entry_engine(results)
         entry_state = entry_state_engine(results)
+        pullback_entry = pullback_entry_engine(results)
+        if pullback_entry["status"] == "PULLBACK ENTRY READY":
+            entry_state["state"] = "ENTRY READY"
+            entry_state["trigger"] = "PULLBACK ENTRY CONFIRMED"
+        print("\nPULLBACK ENTRY ENGINE")
+        print("-" * 60)
+        print(f"STATUS         {pullback_entry['status']} ({pullback_entry['confirmations']}/6)")
 
+        trade_plan = None
         if entry_state["state"] == "ENTRY READY":
             sl_distance = abs(entry_state["entry_price"] - entry_state["long_sl"])
             position_btc_risk = risk_amount / sl_distance
-            max_position_btc = min(main_irt_balance / entry_state["entry_price"], capital_cap_amount / entry_state["entry_price"])
+            position_btc_cap = capital_cap_amount / entry_state["entry_price"]
+            position_btc_balance = main_irt_balance / entry_state["entry_price"]
+            max_position_btc = min(position_btc_cap, position_btc_balance)
             position_btc = min(position_btc_risk, max_position_btc)
+            if position_btc == position_btc_risk:
+                position_limit = "RISK LIMIT"
+            elif position_btc == position_btc_cap:
+                position_limit = "CAPITAL CAP"
+            else:
+                position_limit = "AVAILABLE BALANCE"
             print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
             print(f"POSITION SIZE  {position_btc:.8f} BTC")
             position_value = position_btc * entry_state["entry_price"]
             actual_risk = position_btc * sl_distance
             actual_risk_pct = (actual_risk / main_irt_balance) * 100 if main_irt_balance > 0 else 0
             capital_usage_pct = (position_value / main_irt_balance) * 100 if main_irt_balance > 0 else 0
+            trade_plan = trade_plan_engine(entry_state, position_btc, position_value, actual_risk, actual_risk_pct, capital_usage_pct, risk_pct, capital_cap_pct)
             print(f"RISK TARGET    {risk_pct:.2f}%")
             print(f"CAPITAL CAP    {capital_cap_pct:.2f}%")
             print(f"CAPITAL LIMIT  {capital_cap_amount:,.0f} IRT")
             print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
-            print(f"MAX POSITION   {max_position_btc:.8f} BTC")
-            print(f"POSITION VALUE {position_value:,.0f} IRT")
+            print(f"POSITION BY RISK   {position_btc_risk:.8f} BTC")
+            print(f"POSITION BY CAPITAL {position_btc_cap:.8f} BTC")
+            print(f"POSITION BY BALANCE {position_btc_balance:.8f} BTC")
+            print(f"MAX POSITION       {max_position_btc:.8f} BTC")
+            print(f"POSITION LIMIT     {position_limit}")
+            print(f"POSITION VALUE     {position_value:,.0f} IRT")
             print(f"ACTUAL RISK    {actual_risk:,.0f} IRT")
             print(f"ACTUAL RISK %  {actual_risk_pct:.2f}%")
             print(f"CAPITAL USAGE  {capital_usage_pct:.2f}%")
+        if trade_plan is not None:
+            print("\nTRADE PLAN")
+            print("-" * 60)
+            print("STATE          " + trade_plan["state"])
+            print("DIRECTION      LONG")
+            print("ENTRY          {:,.0f}".format(trade_plan["entry"]))
+            print("STOP LOSS      {:,.0f}".format(trade_plan["stop_loss"]))
+            print("TP1            {:,.0f}".format(trade_plan["tp1"]))
+            print("TP2            {:,.0f}".format(trade_plan["tp2"]))
+            print("R/R TP1        1:{:.2f}".format(trade_plan["rr_tp1"]))
+            print("R/R TP2        1:{:.2f}".format(trade_plan["rr_tp2"]))
+            print("POSITION       {:.8f} BTC".format(trade_plan["position_btc"]))
+            print("POSITION VALUE {:,.0f} IRT".format(trade_plan["position_value"]))
+            print("RISK TARGET    {:.2f}%".format(trade_plan["risk_target_pct"]))
+            print("ACTUAL RISK    {:,.0f} IRT".format(trade_plan["actual_risk"]))
+            print("ACTUAL RISK %  {:.2f}%".format(trade_plan["actual_risk_pct"]))
+            print("CAPITAL CAP    {:.2f}%".format(trade_plan["capital_cap_pct"]))
+            print("CAPITAL USAGE  {:.2f}%".format(trade_plan["capital_usage_pct"]))
+            print("ACTION         ENTRY READY")
+            print("-" * 60)
         trade_setup = trade_setup_engine(results)
 
         print("\n" + "=" * 60)
@@ -1418,6 +1577,10 @@ def main():
             print(f"LONG TP2       {entry_state['long_tp2']:,.0f}")
             print(f"RR TP1        1:{entry_state['long_rr_tp1']:.2f}")
             print(f"RR TP2        1:{entry_state['long_rr_tp2']:.2f}")
+            print("!!! ENTRY READY — SIMULATED ALERT !!!")
+            print("NO REAL ORDER — ANALYSIS ONLY")
+        if trade_plan is None:
+            print("ACTION         WAIT")
         print("TRADE PLAN     " + trade_setup["plan"])
         print("PLAN TRIGGER   " + trade_setup["trigger"])
 
@@ -1558,6 +1721,24 @@ def breakout_quality_engine(results):
         "state": "QUALITY" if tf5["breakout"] == "VALID BREAKOUT" else "READINESS",
         "reasons": reasons
     }
+    return entry_state, trade_plan
 
+def monitor():
+    risk_pct = float(input("Risk % (e.g. 1): "))
+    capital_cap_pct = float(input("Max Capital Usage % (e.g. 50): "))
+
+    print("\nBTC ENTRY READY MONITOR STARTED")
+    print("Check interval: 30 seconds")
+    print("NO REAL ORDER — ANALYSIS ONLY")
+
+    while True:
+        try:
+            main(risk_pct, capital_cap_pct)
+            print("\nNext market check in 30 seconds...")
+            time.sleep(30)
+
+        except KeyboardInterrupt:
+            print("\nMonitor stopped by user.")
+            break
 if __name__ == "__main__":
-    main()
+    monitor()
