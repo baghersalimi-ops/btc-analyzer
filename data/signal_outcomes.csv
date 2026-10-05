@@ -1,0 +1,1 @@
+signal_id,route,signal_time_utc,entry,stop_loss,tp1,tp2,rr_tp1,rr_tp2,status,tp1_hit_at,tp2_hit_at,sl_hit_at,outcome_time,last_checked_utc
