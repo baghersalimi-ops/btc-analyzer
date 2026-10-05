@@ -1657,12 +1657,30 @@ def main(risk_pct=None, capital_cap_pct=None):
         entry = smart_entry_engine(results)
         entry_state = entry_state_engine(results)
         pullback_entry = pullback_entry_engine(results)
-        if pullback_entry["status"] == "PULLBACK ENTRY READY":
-            entry_state["state"] = "ENTRY READY"
-            entry_state["trigger"] = "PULLBACK ENTRY CONFIRMED"
+        pullback_trade_plan = pullback_trade_plan_engine(results)
+
         print("\nPULLBACK ENTRY ENGINE")
         print("-" * 60)
-        print(f"STATUS         {pullback_entry['status']} ({pullback_entry['confirmations']}/6)")
+        print(
+            f"STATUS         {pullback_entry['status']} "
+            f"({pullback_entry['confirmations']}/{pullback_entry['total_confirmations']})"
+        )
+        print(f"STRUCTURE      {pullback_entry['structure_status']}")
+
+        print("\nPULLBACK TRADE PLAN")
+        print("-" * 60)
+        print(f"STATE          {pullback_trade_plan['state']}")
+        print(f"TRIGGER        {pullback_trade_plan['trigger']}")
+        print(f"RISK FILTER    {pullback_trade_plan['risk_filter']}")
+        if pullback_trade_plan["entry"] is not None:
+            print(f"ENTRY          {pullback_trade_plan['entry']:,.0f}")
+            print(f"STOP LOSS      {pullback_trade_plan['stop_loss']:,.0f}")
+            if pullback_trade_plan["tp1"] is not None:
+                print(f"TP1            {pullback_trade_plan['tp1']:,.0f}")
+            if pullback_trade_plan["tp2"] is not None:
+                print(f"TP2            {pullback_trade_plan['tp2']:,.0f}")
+            print(f"R/R TP1        1:{pullback_trade_plan['rr_tp1']:.2f}")
+            print(f"R/R TP2        1:{pullback_trade_plan['rr_tp2']:.2f}")
 
         trade_plan = None
         if entry_state["state"] == "ENTRY READY":
