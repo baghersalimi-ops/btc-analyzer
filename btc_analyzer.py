@@ -2349,6 +2349,143 @@ def breakout_quality_engine(results):
     }
     return entry_state, trade_plan
 
+
+def route_realistic_self_test():
+    """
+    V3.14 deterministic end-to-end route tests.
+    Exercises route selection, route-specific trade-plan readiness,
+    and final action without API/network calls.
+    """
+    def base_tf5():
+        return {
+            "price": 1000.0,
+            "ema20": 990.0,
+            "rsi": 60.0,
+            "macd": 10.0,
+            "macd_signal": 5.0,
+            "atr": 10.0,
+            "support": 980.0,
+            "resistance": 1100.0,
+            "next_resistance": 1200.0,
+            "distance_resistance": 10.0,
+            "distance_support": 2.0,
+            "price_action": "NEAR SUPPORT",
+            "pullback": "NO PULLBACK",
+            "next_tp1_status": "CLEAR",
+            "smart_tp1_source": "CLEAR",
+            "entry_quality": "GOOD",
+            "long_sl": 970.0,
+            "smart_tp1": 1090.0,
+            "smart_tp2": 1180.0,
+            "long_rr_tp1": 3.0,
+            "long_rr_tp2": 6.0,
+            "retest": "NO RETEST",
+            "retest_momentum": "MOMENTUM FLAT",
+            "breakout": "NO BREAKOUT",
+        }
+
+    def base_results(tf5):
+        return {
+            "5m": tf5,
+            "15m": {
+                "trend": "BULLISH",
+                "pullback": "POSSIBLE BULLISH PULLBACK",
+                "price_action": "NEAR SUPPORT",
+                "support": 980.0,
+            },
+            "1h": {
+                "trend": "BULLISH",
+            },
+        }
+
+    def make_plan(entry_state):
+        return trade_plan_engine(
+            entry_state,
+            0.1,
+            100.0,
+            3.0,
+            0.3,
+            0.01,
+            1.0,
+            50.0,
+        )
+
+    # 1. Breakout -> plan -> ENTRY READY
+    tf5 = base_tf5()
+    tf5.update({"breakout": "VALID BREAKOUT", "pullback": "NO PULLBACK", "price_action": "BREAKOUT UP"})
+    results = base_results(tf5)
+    entry_state = entry_state_engine(results)
+    assert entry_state["state"] == "ENTRY READY"
+    assert entry_state["trigger"] == "5m VALID BREAKOUT + MTF CONFIRMATION"
+    pullback_entry = {"status": "NO PULLBACK ENTRY"}
+    decision = route_priority_engine(results, entry_state, pullback_entry)
+    assert decision["route"] == "BREAKOUT"
+    plan = make_plan(entry_state)
+    final_route = final_route_engine(decision, plan)
+    assert final_route["ready"] is True
+    assert final_route["action"] == "ENTRY READY"
+
+    # 2. Retest -> plan -> ENTRY READY
+    tf5 = base_tf5()
+    tf5.update({
+        "breakout": "VALID BREAKOUT",
+        "retest": "RETEST CONFIRMED",
+        "retest_momentum": "MOMENTUM CONFIRMED",
+        "pullback": "NO PULLBACK",
+        "price_action": "NEAR SUPPORT",
+    })
+    results = base_results(tf5)
+    entry_state = entry_state_engine(results)
+    assert entry_state["state"] == "ENTRY READY"
+    pullback_entry = {"status": "NO PULLBACK ENTRY"}
+    decision = route_priority_engine(results, entry_state, pullback_entry)
+    assert decision["route"] == "RETEST"
+    plan = make_plan(entry_state)
+    final_route = final_route_engine(decision, plan)
+    assert final_route["ready"] is True
+    assert final_route["action"] == "ENTRY READY"
+
+    # 3. Pullback -> independent pullback plan -> ENTRY READY
+    tf5 = base_tf5()
+    results = base_results(tf5)
+    entry_state = entry_state_engine(results)
+    assert entry_state["state"] != "ENTRY READY"
+    pullback_entry = pullback_entry_engine(results)
+    assert pullback_entry["status"] == "PULLBACK ENTRY READY"
+    pullback_plan = pullback_trade_plan_engine(results)
+    assert pullback_plan["state"] == "PULLBACK ENTRY READY"
+    assert pullback_plan["stop_loss"] < pullback_plan["entry"] < pullback_plan["tp1"]
+    assert pullback_plan["rr_tp1"] >= 1.0
+    decision = route_priority_engine(results, entry_state, pullback_entry)
+    assert decision["route"] == "PULLBACK"
+    final_route = final_route_engine(decision, pullback_plan)
+    assert final_route["ready"] is True
+    assert final_route["action"] == "ENTRY READY"
+
+    # 4. Incomplete setup -> WAIT
+    tf5 = base_tf5()
+    tf5.update({
+        "rsi": 80.0,
+        "pullback": "NO PULLBACK",
+        "price_action": "NEAR RESISTANCE",
+    })
+    results = base_results(tf5)
+    entry_state = entry_state_engine(results)
+    pullback_entry = pullback_entry_engine(results)
+    decision = route_priority_engine(results, entry_state, pullback_entry)
+    assert decision["route"] == "WAIT"
+    final_route = final_route_engine(decision, None)
+    assert final_route["action"] == "WAIT"
+    assert final_route["ready"] is False
+
+    # 5. Selected route without a valid plan -> WAIT
+    decision = {"route": "PULLBACK", "reason": "PULLBACK SELECTED"}
+    final_route = final_route_engine(decision, None)
+    assert final_route["action"] == "WAIT"
+    assert final_route["ready"] is False
+
+    return "PASS"
+
 def monitor():
     risk_pct = float(input("Risk % (e.g. 1): "))
     capital_cap_pct = float(input("Max Capital Usage % (e.g. 50): "))
