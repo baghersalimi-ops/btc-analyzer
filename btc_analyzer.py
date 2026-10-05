@@ -1537,6 +1537,37 @@ def route_priority_engine(results, entry_state, pullback_entry):
     }
 
 
+def final_route_engine(route_decision, trade_plan):
+    """
+    V3.14 final route gate.
+    A route is actionable only when its selected trade plan exists.
+    """
+    route = route_decision["route"]
+
+    if route == "WAIT":
+        return {
+            "route": "WAIT",
+            "action": "WAIT",
+            "ready": False,
+            "reason": route_decision["reason"],
+        }
+
+    if trade_plan is None:
+        return {
+            "route": route,
+            "action": "WAIT",
+            "ready": False,
+            "reason": f"{route} SELECTED BUT TRADE PLAN NOT READY",
+        }
+
+    return {
+        "route": route,
+        "action": "ENTRY READY",
+        "ready": True,
+        "reason": route_decision["reason"],
+    }
+
+
 def route_priority_self_test():
     """
     V3.14 deterministic tests for route arbitration.
@@ -2017,6 +2048,18 @@ def main(risk_pct=None, capital_cap_pct=None):
             else:
                 print(f"\nPULLBACK POSITION SIZING: {pullback_sizing['reason']}")
 
+        final_route = final_route_engine(
+            route_decision,
+            trade_plan,
+        )
+
+        print("\nFINAL ROUTE")
+        print("-" * 60)
+        print(f"ROUTE          {final_route['route']}")
+        print(f"ACTION         {final_route['action']}")
+        print(f"READY          {final_route['ready']}")
+        print(f"REASON         {final_route['reason']}")
+
         if trade_plan is not None:
             print("\nTRADE PLAN")
             print("-" * 60)
@@ -2068,7 +2111,7 @@ def main(risk_pct=None, capital_cap_pct=None):
             print(f"RR TP2        1:{entry_state['long_rr_tp2']:.2f}")
             print("!!! ENTRY READY — SIMULATED ALERT !!!")
             print("NO REAL ORDER — ANALYSIS ONLY")
-        if trade_plan is None:
+        if not final_route["ready"]:
             print("ACTION         WAIT")
         print("TRADE PLAN     " + trade_setup["plan"])
         print("PLAN TRIGGER   " + trade_setup["trigger"])
