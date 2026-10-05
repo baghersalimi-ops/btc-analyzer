@@ -858,6 +858,127 @@ def pullback_entry_engine(results):
         "confirmations": confirmations,
         "checks": checks
     }
+
+def pullback_trade_plan_engine(results):
+    """
+    V3.14 Pullback route.
+    Independent trade plan; does not modify Breakout levels or logic.
+    """
+    tf5 = results["5m"]
+    tf15 = results["15m"]
+
+    entry_check = pullback_entry_engine(results)
+
+    if entry_check["status"] != "PULLBACK ENTRY READY":
+        return {
+            "state": entry_check["status"],
+            "trigger": "WAIT FOR PULLBACK CONFIRMATION",
+            "entry": None,
+            "stop_loss": None,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "NOT READY",
+            "reasons": entry_check["checks"],
+        }
+
+    entry = tf5["price"]
+
+    support = min(tf5["support"], tf15["support"])
+    stop_loss = support - (0.5 * tf5["atr"])
+    sl_distance = entry - stop_loss
+
+    if sl_distance <= 0:
+        return {
+            "state": "PULLBACK INVALID",
+            "trigger": "INVALID STOP STRUCTURE",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": ["STOP ABOVE ENTRY"],
+        }
+
+    risk_atr_ratio = sl_distance / tf5["atr"] if tf5["atr"] > 0 else float("inf")
+
+    if risk_atr_ratio > 2.50:
+        return {
+            "state": "PULLBACK INVALID",
+            "trigger": "RISK TOO WIDE",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": [f"SL DISTANCE {risk_atr_ratio:.2f} ATR > 2.50 ATR"],
+        }
+
+    tp1_candidates = [
+        level for level in [tf5["resistance"], tf5["next_resistance"]]
+        if level is not None and level > entry
+    ]
+
+    if not tp1_candidates:
+        return {
+            "state": "PULLBACK INVALID",
+            "trigger": "NO STRUCTURAL TP1",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": ["NO RESISTANCE ABOVE ENTRY"],
+        }
+
+    tp1 = min(tp1_candidates)
+
+    higher_candidates = [
+        level for level in [tf5["next_resistance"]]
+        if level is not None and level > tp1
+    ]
+
+    fallback_tp2 = entry + (3.0 * sl_distance)
+    tp2 = max(higher_candidates) if higher_candidates else fallback_tp2
+
+    rr_tp1 = (tp1 - entry) / sl_distance
+    rr_tp2 = (tp2 - entry) / sl_distance
+
+    if rr_tp1 < 1.00:
+        return {
+            "state": "PULLBACK INVALID",
+            "trigger": "TP1 R/R TOO LOW",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": tp1,
+            "tp2": tp2,
+            "rr_tp1": rr_tp1,
+            "rr_tp2": rr_tp2,
+            "risk_filter": "FAILED",
+            "reasons": [f"TP1 R/R {rr_tp1:.2f} < 1.00"],
+        }
+
+    return {
+        "state": "PULLBACK ENTRY READY",
+        "trigger": "PULLBACK CONFIRMED + MOMENTUM + STRUCTURAL SPACE",
+        "entry": entry,
+        "stop_loss": stop_loss,
+        "tp1": tp1,
+        "tp2": tp2,
+        "rr_tp1": rr_tp1,
+        "rr_tp2": rr_tp2,
+        "risk_filter": "PASSED",
+        "risk_atr_ratio": risk_atr_ratio,
+        "reasons": entry_check["checks"],
+    }
+
 def pullback_confirmation(results):
     tf5 = results["5m"]
     tf15 = results["15m"]
