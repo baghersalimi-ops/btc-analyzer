@@ -22,7 +22,7 @@ def get_bitpin_access_token(api_key, secret_key):
     }
 
     r = requests.post(url, json=payload, timeout=20)
-    print("BITPIN AUTH RESPONSE:", r.status_code, r.text)
+    print("BITPIN AUTH: OK" if r.ok else f"BITPIN AUTH FAILED: {r.status_code}")
     r.raise_for_status()
     data = r.json()
 
