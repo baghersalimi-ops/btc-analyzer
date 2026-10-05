@@ -1537,6 +1537,105 @@ def route_priority_engine(results, entry_state, pullback_entry):
     }
 
 
+def route_priority_self_test():
+    """
+    V3.14 deterministic tests for route arbitration.
+    Tests priority and exclusivity without API/network calls.
+    """
+    base_tf5 = {
+        "retest": "NO RETEST",
+        "retest_momentum": "MOMENTUM FLAT",
+        "breakout": "NO BREAKOUT",
+    }
+
+    base_entry = {"state": "WAIT"}
+    base_pullback = {"status": "NO PULLBACK ENTRY"}
+
+    def run(tf5, entry_state, pullback_entry):
+        results = {"5m": tf5}
+        decision = route_priority_engine(
+            results,
+            entry_state,
+            pullback_entry,
+        )
+        ready_count = sum([
+            decision["retest_ready"],
+            decision["breakout_ready"],
+            decision["pullback_ready"],
+        ])
+        assert ready_count <= 1, (
+            f"Multiple active routes: {decision}"
+        )
+        return decision
+
+    tests = []
+
+    # 1. Nothing ready -> WAIT
+    d = run(
+        dict(base_tf5),
+        dict(base_entry),
+        dict(base_pullback),
+    )
+    assert d["route"] == "WAIT"
+    tests.append(("WAIT", d["route"]))
+
+    # 2. Pullback only -> PULLBACK
+    tf5 = dict(base_tf5)
+    d = run(
+        tf5,
+        dict(base_entry),
+        {"status": "PULLBACK ENTRY READY"},
+    )
+    assert d["route"] == "PULLBACK"
+    tests.append(("PULLBACK", d["route"]))
+
+    # 3. Breakout only -> BREAKOUT
+    tf5 = dict(base_tf5)
+    tf5.update({
+        "breakout": "VALID BREAKOUT",
+    })
+    d = run(
+        tf5,
+        {"state": "ENTRY READY"},
+        dict(base_pullback),
+    )
+    assert d["route"] == "BREAKOUT"
+    tests.append(("BREAKOUT", d["route"]))
+
+    # 4. Retest + Breakout + Pullback -> RETEST wins
+    tf5 = dict(base_tf5)
+    tf5.update({
+        "retest": "RETEST CONFIRMED",
+        "retest_momentum": "MOMENTUM CONFIRMED",
+        "breakout": "VALID BREAKOUT",
+    })
+    d = run(
+        tf5,
+        {"state": "ENTRY READY"},
+        {"status": "PULLBACK ENTRY READY"},
+    )
+    assert d["route"] == "RETEST"
+    tests.append(("ALL READY -> RETEST", d["route"]))
+
+    # 5. Breakout + Pullback -> BREAKOUT wins
+    tf5 = dict(base_tf5)
+    tf5.update({
+        "breakout": "VALID BREAKOUT",
+    })
+    d = run(
+        tf5,
+        {"state": "ENTRY READY"},
+        {"status": "PULLBACK ENTRY READY"},
+    )
+    assert d["route"] == "BREAKOUT"
+    tests.append(("BREAKOUT + PULLBACK", d["route"]))
+
+    return {
+        "status": "PASS",
+        "tests": tests,
+    }
+
+
 def pullback_position_sizing(trade_plan, balance, risk_pct, capital_cap_pct):
     """
     V3.14 Pullback route position sizing.
@@ -1631,6 +1730,13 @@ def trade_plan_engine(entry_state, position_btc, position_value, actual_risk, ac
     }
 
 def main(risk_pct=None, capital_cap_pct=None):
+    route_test = route_priority_self_test()
+    print("\nROUTE SELF-TEST")
+    print("-" * 60)
+    print(f"STATUS         {route_test['status']}")
+    for name, route in route_test["tests"]:
+        print(f"{name:<24} -> {route}")
+
     print("\n" + "=" * 60)
     print("BTC/IRT SMART ANALYZER V3.13")
     print("=" * 60)
