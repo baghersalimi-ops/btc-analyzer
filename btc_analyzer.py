@@ -469,6 +469,8 @@ def analyze_timeframe(df, tf):
         "false_breakout": false_breakout,
         "retest_momentum": momentum["status"],
         "retest": retest["status"],
+        "retest_resistance": retest["resistance"],
+        "retest_distance": retest["distance"],
         "breakout_strength": breakout["strength"],
         "breakout_distance": breakout["breakout_distance"],
         "breakout_volume_ratio": breakout["volume_ratio"],
@@ -762,6 +764,268 @@ def breakout_retest(df):
         "resistance": breakout_resistance,
         "distance": distance
     }
+
+def retest_trade_plan_engine(results):
+    """
+    V3.14 Retest route.
+    Independent trade plan based on the original Breakout/Retest level.
+    Does not modify Breakout or Pullback logic.
+    """
+    tf5 = results["5m"]
+    tf15 = results["15m"]
+    tf1h = results["1h"]
+
+    htf_ok = (
+        tf1h["trend"] == "BULLISH"
+        and tf15["trend"] == "BULLISH"
+    )
+    retest_ok = (
+        tf5["retest"] == "RETEST CONFIRMED"
+        and tf5["retest_momentum"] == "MOMENTUM CONFIRMED"
+    )
+    rsi_ok = tf5["rsi"] < 75
+    entry_quality_ok = tf5["entry_quality"] in ["GOOD", "MEDIUM"]
+
+    checks = [
+        "1h/15m BULLISH" if htf_ok else "HTF NOT BULLISH",
+        "RETEST CONFIRMED" if tf5["retest"] == "RETEST CONFIRMED" else "RETEST NOT CONFIRMED",
+        "RETEST MOMENTUM CONFIRMED"
+        if tf5["retest_momentum"] == "MOMENTUM CONFIRMED"
+        else "RETEST MOMENTUM NOT CONFIRMED",
+        "5m RSI OK" if rsi_ok else "5m RSI TOO HIGH",
+        "5m ENTRY QUALITY OK" if entry_quality_ok else "5m ENTRY QUALITY POOR",
+    ]
+
+    if not all([htf_ok, retest_ok, rsi_ok, entry_quality_ok]):
+        return {
+            "state": "RETEST ENTRY NOT READY",
+            "trigger": "WAIT FOR RETEST CONFIRMATION",
+            "entry": None,
+            "stop_loss": None,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "NOT READY",
+            "reasons": checks,
+        }
+
+    entry = tf5["price"]
+    atr = tf5["atr"]
+    retest_level = tf5.get("retest_resistance")
+
+    if atr <= 0:
+        return {
+            "state": "RETEST INVALID",
+            "trigger": "INVALID ATR",
+            "entry": entry,
+            "stop_loss": None,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": checks + ["ATR INVALID"],
+        }
+
+    if retest_level is None or retest_level <= 0:
+        return {
+            "state": "RETEST INVALID",
+            "trigger": "INVALID RETEST LEVEL",
+            "entry": entry,
+            "stop_loss": None,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": checks + ["RETEST BREAKOUT LEVEL INVALID"],
+        }
+
+    stop_loss = retest_level - (0.5 * atr)
+    sl_distance = entry - stop_loss
+
+    if sl_distance <= 0:
+        return {
+            "state": "RETEST INVALID",
+            "trigger": "INVALID STOP STRUCTURE",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": checks + ["STOP ABOVE OR AT ENTRY"],
+        }
+
+    risk_atr_ratio = sl_distance / atr
+
+    if risk_atr_ratio > 2.5:
+        return {
+            "state": "RETEST INVALID",
+            "trigger": "RISK TOO HIGH",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": checks + [f"RISK/ATR TOO HIGH: {risk_atr_ratio:.2f}"],
+        }
+
+    candidates = [
+        value for value in [
+            tf5.get("resistance"),
+            tf5.get("next_resistance"),
+        ]
+        if value is not None and value > entry
+    ]
+
+    if not candidates:
+        return {
+            "state": "RETEST INVALID",
+            "trigger": "NO RESISTANCE ABOVE ENTRY",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": None,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": checks + ["NO STRUCTURAL RESISTANCE ABOVE ENTRY"],
+        }
+
+    structural_tp1 = min(candidates) * 0.997
+
+    if structural_tp1 <= entry:
+        return {
+            "state": "RETEST INVALID",
+            "trigger": "TP1 BLOCKED",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": structural_tp1,
+            "tp2": None,
+            "rr_tp1": 0,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": checks + ["TP1 AT OR BELOW ENTRY"],
+        }
+
+    rr_tp1 = (structural_tp1 - entry) / sl_distance
+
+    if rr_tp1 < 1.0:
+        return {
+            "state": "RETEST INVALID",
+            "trigger": "TP1 R/R TOO LOW",
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "tp1": structural_tp1,
+            "tp2": None,
+            "rr_tp1": rr_tp1,
+            "rr_tp2": 0,
+            "risk_filter": "FAILED",
+            "reasons": checks + [f"TP1 R/R BELOW 1R: {rr_tp1:.2f}"],
+        }
+
+    next_candidates = [
+        value for value in [
+            tf5.get("resistance"),
+            tf5.get("next_resistance"),
+        ]
+        if value is not None and value > structural_tp1 / 0.997
+    ]
+
+    if next_candidates:
+        structural_tp2 = min(next_candidates) * 0.997
+    else:
+        structural_tp2 = entry + (3.0 * sl_distance)
+
+    max_tp2 = entry + (3.0 * sl_distance)
+    tp2 = min(structural_tp2, max_tp2)
+
+    if tp2 <= structural_tp1:
+        tp2 = max_tp2
+
+    rr_tp2 = (tp2 - entry) / sl_distance
+
+    return {
+        "state": "RETEST ENTRY READY",
+        "trigger": "RETEST CONFIRMED + MOMENTUM CONFIRMED + STRUCTURAL SPACE",
+        "entry": entry,
+        "stop_loss": stop_loss,
+        "tp1": structural_tp1,
+        "tp2": tp2,
+        "rr_tp1": rr_tp1,
+        "rr_tp2": rr_tp2,
+        "risk_filter": "PASSED",
+        "risk_atr_ratio": risk_atr_ratio,
+        "retest_level": retest_level,
+        "reasons": checks,
+    }
+
+
+def retest_position_sizing(trade_plan, balance, risk_pct, capital_cap_pct):
+    """
+    V3.14 Retest route position sizing.
+    Uses the Retest-specific entry and stop loss.
+    """
+    if trade_plan["state"] != "RETEST ENTRY READY":
+        return {
+            "status": "NOT READY",
+            "reason": "RETEST TRADE PLAN NOT READY",
+        }
+
+    entry = trade_plan["entry"]
+    stop_loss = trade_plan["stop_loss"]
+    sl_distance = abs(entry - stop_loss)
+
+    if balance <= 0:
+        return {"status": "FAILED", "reason": "INVALID BALANCE"}
+
+    if sl_distance <= 0:
+        return {"status": "FAILED", "reason": "INVALID SL DISTANCE"}
+
+    risk_amount = balance * risk_pct / 100
+    capital_cap_amount = balance * capital_cap_pct / 100
+
+    position_btc_risk = risk_amount / sl_distance
+    position_btc_cap = capital_cap_amount / entry
+    position_btc_balance = balance / entry
+
+    max_position_btc = min(position_btc_cap, position_btc_balance)
+    position_btc = min(position_btc_risk, max_position_btc)
+
+    if position_btc == position_btc_risk:
+        position_limit = "RISK LIMIT"
+    elif position_btc == position_btc_cap:
+        position_limit = "CAPITAL CAP"
+    else:
+        position_limit = "AVAILABLE BALANCE"
+
+    position_value = position_btc * entry
+    actual_risk = position_btc * sl_distance
+    actual_risk_pct = actual_risk / balance * 100
+    capital_usage_pct = position_value / balance * 100
+
+    return {
+        "status": "READY",
+        "sl_distance": sl_distance,
+        "position_btc_risk": position_btc_risk,
+        "position_btc_cap": position_btc_cap,
+        "position_btc_balance": position_btc_balance,
+        "max_position_btc": max_position_btc,
+        "position_btc": position_btc,
+        "position_limit": position_limit,
+        "position_value": position_value,
+        "actual_risk": actual_risk,
+        "actual_risk_pct": actual_risk_pct,
+        "capital_usage_pct": capital_usage_pct,
+        "risk_amount": risk_amount,
+        "capital_cap_amount": capital_cap_amount,
+    }
+
 
 def pullback_structure_engine(results):
     """
@@ -2011,6 +2275,22 @@ def main(risk_pct=None, capital_cap_pct=None):
         entry_state = entry_state_engine(results)
         pullback_entry = pullback_entry_engine(results)
         pullback_trade_plan = pullback_trade_plan_engine(results)
+        retest_trade_plan = retest_trade_plan_engine(results)
+
+        print("\nRETEST TRADE PLAN")
+        print("-" * 60)
+        print(f"STATE          {retest_trade_plan['state']}")
+        print(f"TRIGGER        {retest_trade_plan['trigger']}")
+        print(f"RISK FILTER    {retest_trade_plan['risk_filter']}")
+        if retest_trade_plan["entry"] is not None:
+            print(f"ENTRY          {retest_trade_plan['entry']:,.0f}")
+            print(f"STOP LOSS      {retest_trade_plan['stop_loss']:,.0f}")
+            if retest_trade_plan["tp1"] is not None:
+                print(f"TP1            {retest_trade_plan['tp1']:,.0f}")
+            if retest_trade_plan["tp2"] is not None:
+                print(f"TP2            {retest_trade_plan['tp2']:,.0f}")
+            print(f"R/R TP1        1:{retest_trade_plan['rr_tp1']:.2f}")
+            print(f"R/R TP2        1:{retest_trade_plan['rr_tp2']:.2f}")
 
         print("\nPULLBACK ENTRY ENGINE")
         print("-" * 60)
@@ -2048,9 +2328,10 @@ def main(risk_pct=None, capital_cap_pct=None):
 
         trade_plan = None
         pullback_sizing = None
+        retest_sizing = None
 
-        # Only the selected route is allowed to create an active trade plan.
-        if route_decision["route"] in ["BREAKOUT", "RETEST"]:
+        # Breakout route keeps the existing Breakout trade plan and sizing.
+        if route_decision["route"] == "BREAKOUT":
             sl_distance = abs(entry_state["entry_price"] - entry_state["long_sl"])
             if sl_distance > 0:
                 position_btc_risk = risk_amount / sl_distance
@@ -2088,7 +2369,7 @@ def main(risk_pct=None, capital_cap_pct=None):
                     capital_cap_pct,
                 )
 
-                print("\nBREAKOUT/RETEST POSITION SIZING")
+                print("\nBREAKOUT POSITION SIZING")
                 print("-" * 60)
                 print(f"SL DISTANCE       {sl_distance:,.0f} IRT")
                 print(f"POSITION SIZE     {position_btc:.8f} BTC")
@@ -2097,6 +2378,50 @@ def main(risk_pct=None, capital_cap_pct=None):
                 print(f"ACTUAL RISK       {actual_risk:,.0f} IRT")
                 print(f"ACTUAL RISK %     {actual_risk_pct:.2f}%")
                 print(f"CAPITAL USAGE     {capital_usage_pct:.2f}%")
+
+        # Retest route has its own independent plan and sizing.
+        if route_decision["route"] == "RETEST":
+            retest_sizing = retest_position_sizing(
+                retest_trade_plan,
+                main_irt_balance,
+                risk_pct,
+                capital_cap_pct,
+            )
+
+            if retest_sizing["status"] == "READY":
+                trade_plan = {
+                    "state": retest_trade_plan["state"],
+                    "trigger": retest_trade_plan["trigger"],
+                    "entry": retest_trade_plan["entry"],
+                    "stop_loss": retest_trade_plan["stop_loss"],
+                    "tp1": retest_trade_plan["tp1"],
+                    "tp2": retest_trade_plan["tp2"],
+                    "rr_tp1": retest_trade_plan["rr_tp1"],
+                    "rr_tp2": retest_trade_plan["rr_tp2"],
+                    "position_btc": retest_sizing["position_btc"],
+                    "position_value": retest_sizing["position_value"],
+                    "risk_target_pct": risk_pct,
+                    "actual_risk": retest_sizing["actual_risk"],
+                    "actual_risk_pct": retest_sizing["actual_risk_pct"],
+                    "capital_cap_pct": capital_cap_pct,
+                    "capital_usage_pct": retest_sizing["capital_usage_pct"],
+                }
+
+                print("\nRETEST POSITION SIZING")
+                print("-" * 60)
+                print(f"SL DISTANCE       {retest_sizing['sl_distance']:,.0f} IRT")
+                print(f"POSITION BY RISK  {retest_sizing['position_btc_risk']:.8f} BTC")
+                print(f"POSITION BY CAP   {retest_sizing['position_btc_cap']:.8f} BTC")
+                print(f"POSITION BY BAL.  {retest_sizing['position_btc_balance']:.8f} BTC")
+                print(f"MAX POSITION      {retest_sizing['max_position_btc']:.8f} BTC")
+                print(f"POSITION SIZE     {retest_sizing['position_btc']:.8f} BTC")
+                print(f"POSITION LIMIT    {retest_sizing['position_limit']}")
+                print(f"POSITION VALUE    {retest_sizing['position_value']:,.0f} IRT")
+                print(f"ACTUAL RISK       {retest_sizing['actual_risk']:,.0f} IRT")
+                print(f"ACTUAL RISK %     {retest_sizing['actual_risk_pct']:.2f}%")
+                print(f"CAPITAL USAGE     {retest_sizing['capital_usage_pct']:.2f}%")
+            else:
+                print(f"\nRETEST POSITION SIZING: {retest_sizing['reason']}")
 
         # Pullback route has its own plan and sizing.
         if route_decision["route"] == "PULLBACK":
@@ -2425,11 +2750,18 @@ def route_realistic_self_test():
     assert final_route["ready"] is True
     assert final_route["action"] == "ENTRY READY"
 
-    # 2. Retest -> plan -> ENTRY READY
+    # 2. Retest -> independent plan -> ENTRY READY
     tf5 = base_tf5()
     tf5.update({
+        "price": 1010.0,
+        "atr": 10.0,
+        "support": 990.0,
+        "resistance": 1100.0,
+        "next_resistance": 1200.0,
         "breakout": "VALID BREAKOUT",
         "retest": "RETEST CONFIRMED",
+        "retest_resistance": 1000.0,
+        "retest_distance": 1.0,
         "retest_momentum": "MOMENTUM CONFIRMED",
         "pullback": "NO PULLBACK",
         "price_action": "NEAR SUPPORT",
@@ -2440,10 +2772,52 @@ def route_realistic_self_test():
     pullback_entry = {"status": "NO PULLBACK ENTRY"}
     decision = route_priority_engine(results, entry_state, pullback_entry)
     assert decision["route"] == "RETEST"
-    plan = make_plan(entry_state)
-    final_route = final_route_engine(decision, plan)
+    retest_plan = retest_trade_plan_engine(results)
+    assert retest_plan["state"] == "RETEST ENTRY READY"
+    assert retest_plan["stop_loss"] < retest_plan["entry"] < retest_plan["tp1"]
+    assert retest_plan["rr_tp1"] >= 1.0
+    retest_size = retest_position_sizing(retest_plan, 100000.0, 1.0, 50.0)
+    assert retest_size["status"] == "READY"
+    final_route = final_route_engine(decision, {
+        "state": retest_plan["state"],
+        "entry": retest_plan["entry"],
+    })
     assert final_route["ready"] is True
     assert final_route["action"] == "ENTRY READY"
+
+    # 2b. Retest risk too high -> plan rejected
+    tf5 = base_tf5()
+    tf5.update({
+        "price": 1010.0,
+        "atr": 1.0,
+        "breakout": "VALID BREAKOUT",
+        "retest": "RETEST CONFIRMED",
+        "retest_resistance": 1000.0,
+        "retest_distance": 1.0,
+        "retest_momentum": "MOMENTUM CONFIRMED",
+    })
+    results = base_results(tf5)
+    retest_plan = retest_trade_plan_engine(results)
+    assert retest_plan["state"] == "RETEST INVALID"
+    assert retest_plan["risk_filter"] == "FAILED"
+
+    # 2c. Retest TP1 below 1R -> plan rejected
+    tf5 = base_tf5()
+    tf5.update({
+        "price": 1010.0,
+        "atr": 10.0,
+        "resistance": 1011.0,
+        "next_resistance": None,
+        "breakout": "VALID BREAKOUT",
+        "retest": "RETEST CONFIRMED",
+        "retest_resistance": 1000.0,
+        "retest_distance": 1.0,
+        "retest_momentum": "MOMENTUM CONFIRMED",
+    })
+    results = base_results(tf5)
+    retest_plan = retest_trade_plan_engine(results)
+    assert retest_plan["state"] == "RETEST INVALID"
+    assert retest_plan["risk_filter"] == "FAILED"
 
     # 3. Pullback -> independent pullback plan -> ENTRY READY
     tf5 = base_tf5()
