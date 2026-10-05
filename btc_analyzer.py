@@ -1489,6 +1489,80 @@ def entry_state_engine(results):
     }
 
 
+def pullback_position_sizing(trade_plan, balance, risk_pct, capital_cap_pct):
+    """
+    V3.14 Pullback route position sizing.
+    Uses the Pullback-specific entry and stop loss.
+    """
+    if trade_plan["state"] != "PULLBACK ENTRY READY":
+        return {
+            "status": "NOT READY",
+            "reason": "PULLBACK TRADE PLAN NOT READY",
+        }
+
+    entry = trade_plan["entry"]
+    stop_loss = trade_plan["stop_loss"]
+    sl_distance = abs(entry - stop_loss)
+
+    if balance <= 0:
+        return {"status": "FAILED", "reason": "INVALID BALANCE"}
+
+    if sl_distance <= 0:
+        return {"status": "FAILED", "reason": "INVALID SL DISTANCE"}
+
+    risk_amount = balance * risk_pct / 100
+    capital_cap_amount = balance * capital_cap_pct / 100
+
+    position_btc_risk = risk_amount / sl_distance
+    position_btc_cap = capital_cap_amount / entry
+    position_btc_balance = balance / entry
+
+    max_position_btc = min(
+        position_btc_cap,
+        position_btc_balance
+    )
+
+    position_btc = min(
+        position_btc_risk,
+        max_position_btc
+    )
+
+    if position_btc == position_btc_risk:
+        position_limit = "RISK LIMIT"
+    elif position_btc == position_btc_cap:
+        position_limit = "CAPITAL CAP"
+    else:
+        position_limit = "AVAILABLE BALANCE"
+
+    position_value = position_btc * entry
+    actual_risk = position_btc * sl_distance
+    actual_risk_pct = (
+        actual_risk / balance * 100
+        if balance > 0 else 0
+    )
+    capital_usage_pct = (
+        position_value / balance * 100
+        if balance > 0 else 0
+    )
+
+    return {
+        "status": "READY",
+        "sl_distance": sl_distance,
+        "position_btc_risk": position_btc_risk,
+        "position_btc_cap": position_btc_cap,
+        "position_btc_balance": position_btc_balance,
+        "max_position_btc": max_position_btc,
+        "position_btc": position_btc,
+        "position_limit": position_limit,
+        "position_value": position_value,
+        "actual_risk": actual_risk,
+        "actual_risk_pct": actual_risk_pct,
+        "capital_usage_pct": capital_usage_pct,
+        "risk_amount": risk_amount,
+        "capital_cap_amount": capital_cap_amount,
+    }
+
+
 def trade_plan_engine(entry_state, position_btc, position_value, actual_risk, actual_risk_pct, capital_usage_pct, risk_pct, capital_cap_pct):
     return {
         "state": entry_state["state"],
@@ -1683,39 +1757,51 @@ def main(risk_pct=None, capital_cap_pct=None):
             print(f"R/R TP2        1:{pullback_trade_plan['rr_tp2']:.2f}")
 
         trade_plan = None
-        if entry_state["state"] == "ENTRY READY":
-            sl_distance = abs(entry_state["entry_price"] - entry_state["long_sl"])
-            position_btc_risk = risk_amount / sl_distance
-            position_btc_cap = capital_cap_amount / entry_state["entry_price"]
-            position_btc_balance = main_irt_balance / entry_state["entry_price"]
-            max_position_btc = min(position_btc_cap, position_btc_balance)
-            position_btc = min(position_btc_risk, max_position_btc)
-            if position_btc == position_btc_risk:
-                position_limit = "RISK LIMIT"
-            elif position_btc == position_btc_cap:
-                position_limit = "CAPITAL CAP"
+        pullback_sizing = None
+
+        if pullback_trade_plan["state"] == "PULLBACK ENTRY READY":
+            pullback_sizing = pullback_position_sizing(
+                pullback_trade_plan,
+                main_irt_balance,
+                risk_pct,
+                capital_cap_pct,
+            )
+
+            if pullback_sizing["status"] == "READY":
+                trade_plan = {
+                    "state": pullback_trade_plan["state"],
+                    "trigger": pullback_trade_plan["trigger"],
+                    "entry": pullback_trade_plan["entry"],
+                    "stop_loss": pullback_trade_plan["stop_loss"],
+                    "tp1": pullback_trade_plan["tp1"],
+                    "tp2": pullback_trade_plan["tp2"],
+                    "rr_tp1": pullback_trade_plan["rr_tp1"],
+                    "rr_tp2": pullback_trade_plan["rr_tp2"],
+                    "position_btc": pullback_sizing["position_btc"],
+                    "position_value": pullback_sizing["position_value"],
+                    "risk_target_pct": risk_pct,
+                    "actual_risk": pullback_sizing["actual_risk"],
+                    "actual_risk_pct": pullback_sizing["actual_risk_pct"],
+                    "capital_cap_pct": capital_cap_pct,
+                    "capital_usage_pct": pullback_sizing["capital_usage_pct"],
+                }
+
+                print("\nPULLBACK POSITION SIZING")
+                print("-" * 60)
+                print(f"SL DISTANCE       {pullback_sizing['sl_distance']:,.0f} IRT")
+                print(f"POSITION BY RISK  {pullback_sizing['position_btc_risk']:.8f} BTC")
+                print(f"POSITION BY CAP   {pullback_sizing['position_btc_cap']:.8f} BTC")
+                print(f"POSITION BY BAL.  {pullback_sizing['position_btc_balance']:.8f} BTC")
+                print(f"MAX POSITION      {pullback_sizing['max_position_btc']:.8f} BTC")
+                print(f"POSITION SIZE     {pullback_sizing['position_btc']:.8f} BTC")
+                print(f"POSITION LIMIT    {pullback_sizing['position_limit']}")
+                print(f"POSITION VALUE    {pullback_sizing['position_value']:,.0f} IRT")
+                print(f"ACTUAL RISK       {pullback_sizing['actual_risk']:,.0f} IRT")
+                print(f"ACTUAL RISK %     {pullback_sizing['actual_risk_pct']:.2f}%")
+                print(f"CAPITAL USAGE     {pullback_sizing['capital_usage_pct']:.2f}%")
             else:
-                position_limit = "AVAILABLE BALANCE"
-            print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
-            print(f"POSITION SIZE  {position_btc:.8f} BTC")
-            position_value = position_btc * entry_state["entry_price"]
-            actual_risk = position_btc * sl_distance
-            actual_risk_pct = (actual_risk / main_irt_balance) * 100 if main_irt_balance > 0 else 0
-            capital_usage_pct = (position_value / main_irt_balance) * 100 if main_irt_balance > 0 else 0
-            trade_plan = trade_plan_engine(entry_state, position_btc, position_value, actual_risk, actual_risk_pct, capital_usage_pct, risk_pct, capital_cap_pct)
-            print(f"RISK TARGET    {risk_pct:.2f}%")
-            print(f"CAPITAL CAP    {capital_cap_pct:.2f}%")
-            print(f"CAPITAL LIMIT  {capital_cap_amount:,.0f} IRT")
-            print(f"SL DISTANCE    {sl_distance:,.0f} IRT")
-            print(f"POSITION BY RISK   {position_btc_risk:.8f} BTC")
-            print(f"POSITION BY CAPITAL {position_btc_cap:.8f} BTC")
-            print(f"POSITION BY BALANCE {position_btc_balance:.8f} BTC")
-            print(f"MAX POSITION       {max_position_btc:.8f} BTC")
-            print(f"POSITION LIMIT     {position_limit}")
-            print(f"POSITION VALUE     {position_value:,.0f} IRT")
-            print(f"ACTUAL RISK    {actual_risk:,.0f} IRT")
-            print(f"ACTUAL RISK %  {actual_risk_pct:.2f}%")
-            print(f"CAPITAL USAGE  {capital_usage_pct:.2f}%")
+                print(f"\nPULLBACK POSITION SIZING: {pullback_sizing['reason']}")
+
         if trade_plan is not None:
             print("\nTRADE PLAN")
             print("-" * 60)
