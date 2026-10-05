@@ -2118,6 +2118,79 @@ def trade_plan_engine(entry_state, position_btc, position_value, actual_risk, ac
         "capital_usage_pct": capital_usage_pct,
     }
 
+def print_route_dashboard(
+    entry_state,
+    retest_trade_plan,
+    pullback_trade_plan,
+    final_route,
+):
+    """
+    V3.14 display-only route dashboard.
+    Does not change route selection, trade-plan logic, or sizing.
+    """
+    def show_plan(plan, default_state):
+        state = plan.get("state", default_state)
+        entry = plan.get("entry")
+        stop_loss = plan.get("stop_loss")
+        tp1 = plan.get("tp1")
+        tp2 = plan.get("tp2")
+        rr1 = plan.get("rr_tp1", 0)
+        rr2 = plan.get("rr_tp2", 0)
+
+        print(f"  Status: {state}")
+        if entry is not None:
+            print(f"  Entry:  {entry:,.0f}")
+        else:
+            print("  Entry:  -")
+        if stop_loss is not None:
+            print(f"  SL:     {stop_loss:,.0f}")
+        else:
+            print("  SL:     -")
+        if tp1 is not None:
+            print(f"  TP1:    {tp1:,.0f}")
+        else:
+            print("  TP1:    -")
+        if tp2 is not None:
+            print(f"  TP2:    {tp2:,.0f}")
+        else:
+            print("  TP2:    -")
+        if entry is not None and rr1:
+            print(f"  R/R:    1:{rr1:.2f} / 1:{rr2:.2f}")
+        else:
+            print("  R/R:    -")
+
+    print("\n" + "=" * 60)
+    print("V3.14 SMART ROUTER")
+    print("=" * 60)
+
+    print("\nBREAKOUT")
+    print("-" * 60)
+    breakout_plan = {
+        "state": entry_state["state"],
+        "entry": entry_state["entry_price"] if entry_state["state"] == "ENTRY READY" else None,
+        "stop_loss": entry_state["long_sl"] if entry_state["state"] == "ENTRY READY" else None,
+        "tp1": entry_state["long_tp1"] if entry_state["state"] == "ENTRY READY" else None,
+        "tp2": entry_state["long_tp2"] if entry_state["state"] == "ENTRY READY" else None,
+        "rr_tp1": entry_state["long_rr_tp1"] if entry_state["state"] == "ENTRY READY" else 0,
+        "rr_tp2": entry_state["long_rr_tp2"] if entry_state["state"] == "ENTRY READY" else 0,
+    }
+    show_plan(breakout_plan, "BREAKOUT WAIT")
+
+    print("\nRETEST")
+    print("-" * 60)
+    show_plan(retest_trade_plan, "RETEST ENTRY NOT READY")
+
+    print("\nPULLBACK")
+    print("-" * 60)
+    show_plan(pullback_trade_plan, "PULLBACK ENTRY NOT READY")
+
+    print("\n" + "=" * 60)
+    print("FINAL ROUTE: " + final_route["route"])
+    print("ACTION:      " + final_route["action"])
+    print("READY:       " + str(final_route["ready"]))
+    print("REASON:      " + final_route["reason"])
+    print("=" * 60)
+
 def main(risk_pct=None, capital_cap_pct=None):
     route_test = route_priority_self_test()
     print("\nROUTE SELF-TEST")
@@ -2472,12 +2545,12 @@ def main(risk_pct=None, capital_cap_pct=None):
             trade_plan,
         )
 
-        print("\nFINAL ROUTE")
-        print("-" * 60)
-        print(f"ROUTE          {final_route['route']}")
-        print(f"ACTION         {final_route['action']}")
-        print(f"READY          {final_route['ready']}")
-        print(f"REASON         {final_route['reason']}")
+        print_route_dashboard(
+            entry_state,
+            retest_trade_plan,
+            pullback_trade_plan,
+            final_route,
+        )
 
         if trade_plan is not None:
             print("\nTRADE PLAN")
