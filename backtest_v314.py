@@ -201,6 +201,127 @@ def evaluate_signal(signal, future_df):
     return "OPEN", None
 
 
+
+def validate_plan(route, plan):
+    """Backtest-only safety gate; V3.14 analyzer logic is unchanged."""
+    if not plan:
+        return False, "NO PLAN"
+    try:
+        entry = float(plan["entry"])
+        sl = float(plan["stop_loss"])
+        tp1 = float(plan["tp1"])
+        tp2 = float(plan["tp2"])
+    except (KeyError, TypeError, ValueError):
+        return False, "MISSING/INVALID LEVEL"
+
+    if not (entry > sl > 0):
+        return False, "INVALID ENTRY/SL"
+    if tp1 <= entry:
+        return False, "TP1 NOT ABOVE ENTRY"
+    if tp2 <= tp1:
+        return False, "TP2 NOT ABOVE TP1"
+
+    risk = entry - sl
+    rr1 = (tp1 - entry) / risk
+    rr2 = (tp2 - entry) / risk
+
+    if rr1 < 1.0:
+        return False, f"TP1 R={rr1:.2f} < 1R"
+    if rr2 <= rr1:
+        return False, "TP2 R NOT ABOVE TP1 R"
+
+    return True, "VALID"
+
+
+def trade_fingerprint(signal):
+    return (
+        signal["route"],
+        round(signal["entry"], -4),
+        round(signal["stop_loss"], -4),
+        round(signal["tp1"], -4),
+        round(signal["tp2"], -4),
+    )
+
+
+def evaluate_signal(signal, future_df):
+    """
+    50% at TP1, then remaining 50% protected at breakeven,
+    with final 50% at TP2. Same-candle ambiguity is preserved.
+    """
+    entry = signal["entry"]
+    sl = signal["stop_loss"]
+    tp1 = signal["tp1"]
+    tp2 = signal["tp2"]
+    risk = entry - sl
+    tp1_hit = False
+
+    for _, candle in future_df.iterrows():
+        ts = int(candle["timestamp"])
+        high = float(candle["high"])
+        low = float(candle["low"])
+
+        if not tp1_hit:
+            if high >= tp1 and low <= sl:
+                return {
+                    "outcome": "AMBIGUOUS",
+                    "outcome_time_utc": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+                    "realized_r": 0.0,
+                    "management": "AMBIGUOUS_BEFORE_TP1",
+                }
+            if low <= sl:
+                return {
+                    "outcome": "SL",
+                    "outcome_time_utc": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+                    "realized_r": -1.0,
+                    "management": "FULL_STOP",
+                }
+            if high >= tp1:
+                tp1_hit = True
+                if high >= tp2:
+                    rr1 = (tp1 - entry) / risk
+                    rr2 = (tp2 - entry) / risk
+                    return {
+                        "outcome": "TP2_HIT",
+                        "outcome_time_utc": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+                        "realized_r": 0.5 * rr1 + 0.5 * rr2,
+                        "management": "TP1_50pct_THEN_TP2_50pct",
+                    }
+                continue
+        else:
+            if high >= tp2:
+                rr1 = (tp1 - entry) / risk
+                rr2 = (tp2 - entry) / risk
+                return {
+                    "outcome": "TP2_HIT",
+                    "outcome_time_utc": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+                    "realized_r": 0.5 * rr1 + 0.5 * rr2,
+                    "management": "TP1_50pct_THEN_TP2_50pct",
+                }
+            if low <= entry:
+                rr1 = (tp1 - entry) / risk
+                return {
+                    "outcome": "TP1_THEN_BE",
+                    "outcome_time_utc": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+                    "realized_r": 0.5 * rr1,
+                    "management": "TP1_50pct_THEN_BREAKEVEN",
+                }
+
+    if tp1_hit:
+        return {
+            "outcome": "OPEN_AFTER_TP1",
+            "outcome_time_utc": "",
+            "realized_r": None,
+            "management": "OPEN_AFTER_TP1",
+        }
+
+    return {
+        "outcome": "OPEN",
+        "outcome_time_utc": "",
+        "realized_r": None,
+        "management": "OPEN_BEFORE_TP1",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=60)
