@@ -215,12 +215,13 @@ def main():
     start_ts = int(start_dt.timestamp())
     end_ts = int(end_dt.timestamp())
 
-    print("V3.14 HISTORICAL BACKTEST")
+    print("V3.14 HISTORICAL BACKTEST V2")
     print("=" * 60)
     print(f"WINDOW       {start_dt.isoformat()} -> {end_dt.isoformat()}")
     print("SOURCE       api.bitpin.org")
     print("SYMBOL       BTC_IRT")
     print("TIMEFRAMES   5m / 15m / 1h")
+    print("MODEL        50% TP1 -> SL to BE -> 50% TP2")
 
     frames = {}
     for tf in TIMEFRAMES:
@@ -231,6 +232,10 @@ def main():
     base = frames["5m"]
     signals = []
     previous_route = "WAIT"
+    active_until_ts = None
+    seen_fingerprints = set()
+    rejected = {}
+
     cache = {
         "15m": {"timestamp": None, "result": None},
         "1h": {"timestamp": None, "result": None},
@@ -243,33 +248,71 @@ def main():
 
         route, final, plan = build_route(results)
 
-        if final["ready"] and route != "WAIT" and route != previous_route:
-            if plan:
-                entry = plan.get("entry")
-                sl = plan.get("stop_loss")
-                tp1 = plan.get("tp1")
-                tp2 = plan.get("tp2")
+        # Do not open a second trade while the previous simulated trade
+        # is still active. This removes clustered/overlapping entries.
+        trade_available = active_until_ts is None or t > active_until_ts
 
-                if all(x is not None for x in (entry, sl, tp1, tp2)):
-                    signal = {
-                        "signal_time_utc": datetime.fromtimestamp(t, timezone.utc).isoformat(),
-                        "route": route,
-                        "entry": float(entry),
-                        "stop_loss": float(sl),
-                        "tp1": float(tp1),
-                        "tp2": float(tp2),
-                    }
-                    future = base[base["timestamp"] > t]
-                    outcome, outcome_ts = evaluate_signal(signal, future)
-                    signal["outcome"] = outcome
-                    signal["outcome_time_utc"] = (
-                        datetime.fromtimestamp(outcome_ts, timezone.utc).isoformat()
-                        if outcome_ts else ""
+        if final["ready"] and route != "WAIT" and trade_available and plan:
+            valid, reason = validate_plan(route, plan)
+
+            if not valid:
+                rejected[reason] = rejected.get(reason, 0) + 1
+            else:
+                entry = float(plan["entry"])
+                sl = float(plan["stop_loss"])
+                tp1 = float(plan["tp1"])
+                tp2 = float(plan["tp2"])
+
+                signal = {
+                    "signal_time_utc": datetime.fromtimestamp(
+                        t, timezone.utc
+                    ).isoformat(),
+                    "route": route,
+                    "entry": entry,
+                    "stop_loss": sl,
+                    "tp1": tp1,
+                    "tp2": tp2,
+                    "rr_tp1": (tp1 - entry) / (entry - sl),
+                    "rr_tp2": (tp2 - entry) / (entry - sl),
+                }
+
+                fingerprint = trade_fingerprint(signal)
+
+                if fingerprint in seen_fingerprints:
+                    rejected["DUPLICATE_FINGERPRINT"] = (
+                        rejected.get("DUPLICATE_FINGERPRINT", 0) + 1
                     )
+                else:
+                    seen_fingerprints.add(fingerprint)
+
+                    future = base[base["timestamp"] > t]
+                    result = evaluate_signal(signal, future)
+
+                    signal["outcome"] = result["outcome"]
+                    signal["outcome_time_utc"] = result["outcome_time_utc"]
+                    signal["realized_r"] = result["realized_r"]
+                    signal["management"] = result["management"]
+
                     signals.append(signal)
+
+                    if result["outcome_time_utc"]:
+                        active_until_ts = int(
+                            datetime.fromisoformat(
+                                result["outcome_time_utc"]
+                            ).timestamp()
+                        )
+                    else:
+                        # Still-open trade blocks further entries through
+                        # the end of the historical window.
+                        active_until_ts = end_ts
+
                     print(
                         f"SIGNAL {signal['signal_time_utc']} | "
-                        f"{route} | ENTRY={entry:,.0f} | OUTCOME={outcome}",
+                        f"{route} | ENTRY={entry:,.0f} | "
+                        f"R1={signal['rr_tp1']:.2f} | "
+                        f"R2={signal['rr_tp2']:.2f} | "
+                        f"OUTCOME={result['outcome']} | "
+                        f"REALIZED_R={result['realized_r']}",
                         flush=True,
                     )
 
@@ -283,17 +326,45 @@ def main():
 
     weeks = args.days / 7
     total = len(out)
+
     print()
-    print("V3.14 BACKTEST SUMMARY")
+    print("V3.14 BACKTEST V2 SUMMARY")
     print("-" * 60)
     print(f"DAYS                 {args.days}")
-    print(f"SIGNALS              {total}")
-    print(f"SIGNALS / WEEK       {total / weeks:.2f}")
+    print(f"VALID TRADES         {total}")
+    print(f"TRADES / WEEK        {total / weeks:.2f}")
+
     if total:
-        print(out["route"].value_counts().to_string())
         print()
+        print("ROUTES")
+        print(out["route"].value_counts().to_string())
+
+        print()
+        print("OUTCOMES")
         print(out["outcome"].value_counts().to_string())
+
+        realized = out["realized_r"].dropna()
+        if len(realized):
+            print()
+            print(f"REALIZED R TOTAL     {realized.sum():.2f}R")
+            print(f"REALIZED R MEAN      {realized.mean():.2f}R")
+            print(f"WIN RATE (R>0)       {(realized > 0).mean() * 100:.1f}%")
+
+            equity = realized.cumsum()
+            drawdown = equity - equity.cummax()
+            print(f"MAX DRAWDOWN         {drawdown.min():.2f}R")
+
+    if rejected:
+        print()
+        print("REJECTED / FILTERED")
+        for reason, count in sorted(
+            rejected.items(), key=lambda item: (-item[1], item[0])
+        ):
+            print(f"{reason:28s} {count}")
+
     print(f"CSV                  {args.output}")
+
+
 
 
 if __name__ == "__main__":
