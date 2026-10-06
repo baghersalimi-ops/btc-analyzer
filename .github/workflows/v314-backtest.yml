@@ -1,0 +1,50 @@
+name: V3.14 Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Backtest period in days"
+        required: false
+        default: "60"
+      initial_equity:
+        description: "Initial equity in IRT"
+        required: false
+        default: "1000000"
+      fee:
+        description: "Fee per trade side"
+        required: false
+        default: "0"
+      slippage:
+        description: "Entry slippage fraction"
+        required: false
+        default: "0"
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install requests pandas
+
+      - name: Run V3.14 backtest
+        run: |
+          python backtest_v314.py \
+            --days "${{ inputs.days }}" \
+            --initial-equity "${{ inputs.initial_equity }}" \
+            --fee "${{ inputs.fee }}" \
+            --slippage "${{ inputs.slippage }}" | tee backtest_results.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: v314-backtest-results
+          path: backtest_results.txt
