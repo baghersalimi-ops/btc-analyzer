@@ -1,6 +1,11 @@
 name: V3.14 Backtest
 
 on:
+  push:
+    paths:
+      - "backtest_v314.py"
+      - "btc_analyzer.py"
+      - ".github/workflows/v314-backtest.yml"
   workflow_dispatch:
     inputs:
       days:
@@ -38,10 +43,10 @@ jobs:
       - name: Run V3.14 backtest
         run: |
           python backtest_v314.py \
-            --days "${{ inputs.days }}" \
-            --initial-equity "${{ inputs.initial_equity }}" \
-            --fee "${{ inputs.fee }}" \
-            --slippage "${{ inputs.slippage }}" | tee backtest_results.txt
+            --days "${{ inputs.days || '60' }}" \
+            --initial-equity "${{ inputs.initial_equity || '1000000' }}" \
+            --fee "${{ inputs.fee || '0' }}" \
+            --slippage "${{ inputs.slippage || '0' }}" | tee backtest_results.txt
 
       - name: Upload results
         uses: actions/upload-artifact@v4
