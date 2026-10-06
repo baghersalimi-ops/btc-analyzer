@@ -1,0 +1,59 @@
+name: Bitpin Connectivity Check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Bitpin public candles API
+        run: |
+          python - <<'PY'
+          import time
+          import requests
+
+          url = "https://api.bitpin.org/api/v1/mkt/candles/"
+          now = int(time.time())
+          params = {
+              "symbol": "BTC_IRT",
+              "from": now - 500 * 60,
+              "to": now,
+              "res": "1m",
+          }
+
+          r = requests.get(url, params=params, timeout=20)
+          print(f"BITPIN HTTP STATUS: {r.status_code}")
+          r.raise_for_status()
+
+          data = r.json()
+          if isinstance(data, dict):
+              data = data.get("results", data.get("data", []))
+
+          print(f"BITPIN CANDLES COUNT: {len(data)}")
+
+          if not data:
+              raise RuntimeError("Bitpin returned no candle data")
+
+          last = data[-1]
+          if isinstance(last, dict):
+              latest_price = last.get("close")
+              latest_ts = last.get("timestamp", last.get("ts", last.get("time")))
+          else:
+              latest_price = last[4] if len(last) > 4 else None
+              latest_ts = last[0] if len(last) > 0 else None
+
+          print(f"BITPIN SYMBOL: BTC_IRT")
+          print(f"BITPIN RESOLUTION: 1m")
+          print(f"BITPIN LATEST PRICE: {latest_price}")
+          print(f"BITPIN LATEST TIMESTAMP: {latest_ts}")
+          print("BITPIN CONNECTIVITY: VERIFIED")
+          PY
