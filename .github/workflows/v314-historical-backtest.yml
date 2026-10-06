@@ -1,0 +1,45 @@
+name: V3.14 Historical Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Historical window in days"
+        required: false
+        default: "60"
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout V3.14 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v3.14-pullback-trade-plan
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas numpy
+
+      - name: Run V3.14 backtest
+        env:
+          DAYS: ${{ github.event.inputs.days || '60' }}
+        run: |
+          python backtest_v314.py --days "$DAYS" --output data/v314_backtest.csv
+
+      - name: Upload backtest results
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3.14-backtest-${{ github.run_number }}
+          path: data/v314_backtest.csv
+          retention-days: 30
