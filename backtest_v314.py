@@ -111,17 +111,35 @@ def fetch_history(resolution, start_ts, end_ts, limit=120):
     return df
 
 
-def make_results_at(t, frames):
+def make_results_at(t, frames, cache):
     results = {}
 
-    for tf, df in frames.items():
+    # 5m changes on every backtest step.
+    df5 = frames["5m"]
+    sub5 = df5[df5["timestamp"] <= t].tail(500).copy()
+    if len(sub5) < 220:
+        return None
+
+    sub5["datetime"] = pd.to_datetime(sub5["timestamp"], unit="s", utc=True)
+    sub5 = analyzer.calculate_indicators(sub5)
+    results["5m"] = analyzer.analyze_timeframe(sub5, "5m")
+
+    # Higher timeframes only change when a new candle closes.
+    for tf in ("15m", "1h"):
+        df = frames[tf]
         sub = df[df["timestamp"] <= t].tail(500).copy()
         if len(sub) < 220:
             return None
 
-        sub["datetime"] = pd.to_datetime(sub["timestamp"], unit="s", utc=True)
-        sub = analyzer.calculate_indicators(sub)
-        results[tf] = analyzer.analyze_timeframe(sub, tf)
+        latest_ts = int(sub["timestamp"].iloc[-1])
+        cached = cache[tf]
+        if cached["timestamp"] != latest_ts:
+            sub["datetime"] = pd.to_datetime(sub["timestamp"], unit="s", utc=True)
+            sub = analyzer.calculate_indicators(sub)
+            cached["timestamp"] = latest_ts
+            cached["result"] = analyzer.analyze_timeframe(sub, tf)
+
+        results[tf] = cached["result"]
 
     return results
 
@@ -160,7 +178,6 @@ def build_route(results):
 
 
 def evaluate_signal(signal, future_df):
-    entry = signal["entry"]
     sl = signal["stop_loss"]
     tp1 = signal["tp1"]
     tp2 = signal["tp2"]
@@ -214,10 +231,13 @@ def main():
     base = frames["5m"]
     signals = []
     previous_route = "WAIT"
-    last_signal_ts = None
+    cache = {
+        "15m": {"timestamp": None, "result": None},
+        "1h": {"timestamp": None, "result": None},
+    }
 
     for i, t in enumerate(base["timestamp"].tolist()):
-        results = make_results_at(t, frames)
+        results = make_results_at(t, frames, cache)
         if results is None:
             continue
 
@@ -247,7 +267,6 @@ def main():
                         if outcome_ts else ""
                     )
                     signals.append(signal)
-                    last_signal_ts = t
                     print(
                         f"SIGNAL {signal['signal_time_utc']} | "
                         f"{route} | ENTRY={entry:,.0f} | OUTCOME={outcome}",
@@ -256,7 +275,7 @@ def main():
 
         previous_route = route
 
-        if i % 500 == 0:
+        if i % 1000 == 0:
             print(f"PROGRESS {i}/{len(base)}", flush=True)
 
     out = pd.DataFrame(signals)
