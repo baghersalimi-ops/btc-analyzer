@@ -1,6 +1,9 @@
 name: V3.14 Historical Backtest
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       days:
