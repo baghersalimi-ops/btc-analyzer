@@ -16,8 +16,10 @@ TIMEFRAMES = {
     "1h": 3600,
 }
 
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
-def fetch_history(resolution, start_ts, end_ts, limit=500):
+
+def fetch_history(resolution, start_ts, end_ts, limit=120):
     step = TIMEFRAMES[resolution]
     rows = []
     cursor = start_ts
@@ -31,9 +33,31 @@ def fetch_history(resolution, start_ts, end_ts, limit=500):
             "to": window_end,
             "res": resolution,
         }
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
+
+        data = None
+        for attempt in range(1, 6):
+            try:
+                r = requests.get(url, params=params, timeout=30)
+                if r.status_code in RETRYABLE_STATUS:
+                    raise requests.HTTPError(
+                        f"retryable HTTP {r.status_code}", response=r
+                    )
+                r.raise_for_status()
+                data = r.json()
+                break
+            except (requests.RequestException, ValueError) as exc:
+                if attempt == 5:
+                    raise RuntimeError(
+                        f"Bitpin {resolution} request failed after 5 attempts: {exc}"
+                    ) from exc
+                wait = min(8.0, 0.8 * (2 ** (attempt - 1)))
+                print(
+                    f"  RETRY {resolution} {attempt}/5 | "
+                    f"HTTP={getattr(getattr(exc, 'response', None), 'status_code', 'N/A')} | "
+                    f"wait={wait:.1f}s",
+                    flush=True,
+                )
+                time.sleep(wait)
 
         if isinstance(data, dict):
             data = data.get("results", data.get("data", []))
@@ -75,13 +99,15 @@ def fetch_history(resolution, start_ts, end_ts, limit=500):
                 next_cursor = window_end
             cursor = min(next_cursor, end_ts)
 
-        time.sleep(0.08)
+        time.sleep(0.20)
 
     if not rows:
         raise RuntimeError(f"No {resolution} data returned by Bitpin")
 
     df = pd.DataFrame(rows).drop_duplicates("timestamp").sort_values("timestamp")
-    df = df[(df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)].reset_index(drop=True)
+    df = df[
+        (df["timestamp"] >= start_ts) & (df["timestamp"] <= end_ts)
+    ].reset_index(drop=True)
     return df
 
 
