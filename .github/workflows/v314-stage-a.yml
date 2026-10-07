@@ -1,0 +1,35 @@
+name: V3.14 Stage A - Long Path Research
+
+on:
+  push:
+    branches:
+      - "research/v314-stage-a"
+    paths:
+      - "research_v314_path_breakdown.py"
+      - "research_v314_dual_side.py"
+      - "backtest_v314.py"
+      - "btc_analyzer.py"
+      - ".github/workflows/v314-stage-a.yml"
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install requests pandas numpy
+      - name: Run Stage A
+        run: |
+          set -o pipefail
+          python research_v314_path_breakdown.py --days 180 --initial-equity 1000000 --fee 0 --slippage 0 | tee stage_a_results.txt
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: v314-stage-a-results
+          path: stage_a_results.txt
