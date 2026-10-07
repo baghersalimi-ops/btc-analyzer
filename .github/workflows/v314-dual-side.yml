@@ -27,7 +27,9 @@ jobs:
         run: python -m pip install requests pandas numpy
 
       - name: Run dual-side research
-        run: python research_v314_dual_side.py --days 60 --initial-equity 1000000 --fee 0 --slippage 0 | tee dual_side_results.txt
+        run: |
+          set -o pipefail
+          python research_v314_dual_side.py --days 60 --initial-equity 1000000 --fee 0 --slippage 0 | tee dual_side_results.txt
 
       - name: Upload results
         uses: actions/upload-artifact@v4
