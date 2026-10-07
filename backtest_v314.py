@@ -24,6 +24,10 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+
+MAX_FETCH_RETRIES = 5
+FETCH_TIMEOUT = (15, 60)
+
 import btc_analyzer as v314
 
 
@@ -71,9 +75,28 @@ def fetch_history(resolution, days=60, chunk=CANDLES_PER_REQUEST):
             "res": resolution,
         }
 
-        r = v314.requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
+        last_error = None
+        for attempt in range(1, MAX_FETCH_RETRIES + 1):
+            try:
+                r = v314.requests.get(url, params=params, timeout=FETCH_TIMEOUT)
+                r.raise_for_status()
+                data = r.json()
+                break
+            except (v314.requests.exceptions.RequestException, ValueError) as exc:
+                last_error = exc
+                if attempt == MAX_FETCH_RETRIES:
+                    raise RuntimeError(
+                        f"Bitpin history fetch failed after {MAX_FETCH_RETRIES} attempts "
+                        f"for {resolution} chunk {cursor}-{chunk_end}: {exc}"
+                    ) from exc
+                wait = min(2 ** (attempt - 1), 8)
+                print(
+                    f"Fetch retry {attempt}/{MAX_FETCH_RETRIES - 1} "
+                    f"for {resolution}: waiting {wait}s after {type(exc).__name__}"
+                )
+                time.sleep(wait)
+        else:
+            raise RuntimeError(f"Bitpin history fetch failed: {last_error}")
         if isinstance(data, dict):
             data = data.get("results", data.get("data", []))
 
