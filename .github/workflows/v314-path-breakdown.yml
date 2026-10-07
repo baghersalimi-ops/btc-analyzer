@@ -1,0 +1,35 @@
+name: V3.14 Path-Level Research
+
+on:
+  push:
+    branches:
+      - "research/v314-path-breakdown"
+    paths:
+      - "research_v314_path_breakdown.py"
+      - "research_v314_dual_side.py"
+      - "backtest_v314.py"
+      - "btc_analyzer.py"
+      - ".github/workflows/v314-path-breakdown.yml"
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install requests pandas numpy
+      - name: Run path-level research
+        run: |
+          set -o pipefail
+          python research_v314_path_breakdown.py --days 60 --initial-equity 1000000 --fee 0 --slippage 0 | tee path_breakdown_results.txt
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: v314-path-breakdown-results
+          path: path_breakdown_results.txt
