@@ -251,29 +251,56 @@ def simulate_trade(signal, entry_candle, future, sl_pct, mode,
     )
 
 
-def run_mode(history, sl_pct, mode, initial_equity,
-             dual_side=True, fee_rate=0.0, slippage_pct=0.0):
+def build_signals(history):
+    """Evaluate V3.14 signals ONCE per 5m candle.
+
+    The previous implementation recalculated the full MTF decision engine
+    separately for every SL/mode and Long/Long+Short run. That multiplied
+    the expensive signal logic 16x. Precomputing point-in-time signals once
+    keeps the research architecture identical while removing that bottleneck.
+    """
     base = history[BASE_RESOLUTION]
+    signals = {}
+    print("Precomputing Long/Short signals once...")
+    for i in range(210, len(base) - 2):
+        ts = int(base.iloc[i]["ts"])
+        long_sig = long_signal_at(history, ts)
+        short_sig = short_signal_at(history, ts)
+
+        if long_sig and short_sig:
+            signals[i] = None
+        elif long_sig:
+            signals[i] = {
+                "side": "LONG",
+                "setup": long_sig["setup"],
+                "signal_price": long_sig["entry_signal"],
+                "tp1": long_sig["smart_tp1"],
+                "tp2": long_sig["smart_tp2"],
+            }
+        elif short_sig:
+            signals[i] = short_sig
+        else:
+            signals[i] = None
+
+    print(f"Signal scan complete: {len(signals):,} candles evaluated.")
+    return signals
+
+
+def run_mode(base, signals, sl_pct, mode, initial_equity,
+             dual_side=True, fee_rate=0.0, slippage_pct=0.0):
     trades = []
     equity = float(initial_equity)
 
     i = 210
     while i < len(base) - 2:
-        ts = int(base.iloc[i]["ts"])
-
-        signal = dual_signal_at(history, ts) if dual_side else long_signal_at(history, ts)
+        signal = signals.get(i)
         if signal is None:
             i += 1
             continue
 
-        if not dual_side:
-            signal = {
-                "side": "LONG",
-                "setup": signal["setup"],
-                "signal_price": signal["entry_signal"],
-                "tp1": signal["smart_tp1"],
-                "tp2": signal["smart_tp2"],
-            }
+        if not dual_side and signal["side"] != "LONG":
+            i += 1
+            continue
 
         entry_idx = i + 1
         entry_candle = base.iloc[entry_idx]
@@ -359,6 +386,8 @@ def main():
     args = parser.parse_args()
 
     history = prepare_history(args.days)
+    signals = build_signals(history)
+    base = history[BASE_RESOLUTION]
 
     rows = []
     for mode in ("smart_tp", "rr"):
@@ -366,12 +395,12 @@ def main():
             print(f"Running {mode}, SL={sl*100:.1f}% ...")
 
             long_trades = run_mode(
-                history, sl, mode, args.initial_equity,
+                base, signals, sl, mode, args.initial_equity,
                 dual_side=False, fee_rate=args.fee,
                 slippage_pct=args.slippage
             )
             dual_trades = run_mode(
-                history, sl, mode, args.initial_equity,
+                base, signals, sl, mode, args.initial_equity,
                 dual_side=True, fee_rate=args.fee,
                 slippage_pct=args.slippage
             )
