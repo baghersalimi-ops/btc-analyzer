@@ -33,3 +33,5 @@ jobs:
         with:
           name: v314-stage-a-results
           path: stage_a_results.txt
+
+# Stage A: 180-day out-of-sample-style research extension.
