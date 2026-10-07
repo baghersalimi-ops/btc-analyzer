@@ -124,8 +124,18 @@ def prepare_history(days):
 
 
 def _slice_at_or_before(df, ts):
+    """Return a bounded point-in-time window for V3.14 decision logic.
+
+    Indicators are calculated once on the full historical series. The
+    decision functions only need recent candles for levels/price action,
+    while the precomputed indicator columns retain full-series warm-up.
+    Limiting the slice to 210 candles avoids repeatedly copying and scanning
+    the entire 60-day dataframe at every 5m signal timestamp.
+    """
     pos = df["ts"].searchsorted(ts, side="right")
-    return df.iloc[:pos].copy()
+    if pos < 210:
+        return df.iloc[:pos].copy()
+    return df.iloc[pos - 210:pos].copy()
 
 
 def _get_mtf_results(history, ts):
