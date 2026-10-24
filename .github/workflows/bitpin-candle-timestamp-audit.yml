@@ -1,0 +1,87 @@
+name: Bitpin Candle Timestamp Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/candle-timestamp-audit-20261025
+    paths:
+      - .github/workflows/bitpin-candle-timestamp-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inspect public candle timestamps
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import time
+          import requests
+
+          URL = "https://api.bitpin.org/api/v1/mkt/candles/"
+          now = int(time.time())
+          print("AUDIT_UTC_NOW:", dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat())
+          print("NOTE: timestamp alignment alone cannot prove whether the exchange includes an unclosed candle.")
+          for resolution, seconds in (("5m", 300), ("15m", 900), ("1h", 3600)):
+              params = {
+                  "symbol": "BTC_IRT",
+                  "from": now - seconds * 8,
+                  "to": now,
+                  "res": resolution,
+              }
+              response = requests.get(URL, params=params, timeout=25)
+              print(f"\n=== RESOLUTION {resolution} | HTTP {response.status_code} ===")
+              response.raise_for_status()
+              payload = response.json()
+              if isinstance(payload, dict):
+                  rows = payload.get("results", payload.get("data", []))
+              else:
+                  rows = payload
+              parsed = []
+              for row in rows or []:
+                  if isinstance(row, dict):
+                      raw_ts = row.get("timestamp", row.get("ts", row.get("time")))
+                      close = row.get("close")
+                      op = row.get("open")
+                  elif isinstance(row, (list, tuple)) and row:
+                      raw_ts = row[0]
+                      op = row[1] if len(row) > 1 else None
+                      close = row[4] if len(row) > 4 else None
+                  else:
+                      continue
+                  try:
+                      ts = int(float(raw_ts))
+                      if ts > 10**12:
+                          ts //= 1000
+                      parsed.append((ts, op, close, raw_ts))
+                  except (TypeError, ValueError):
+                      print("UNPARSEABLE_TIMESTAMP_ROW:", repr(row)[:300])
+              parsed.sort(key=lambda x: x[0])
+              print("CANDLE_COUNT:", len(parsed))
+              if not parsed:
+                  print("NO_PARSEABLE_CANDLES")
+                  continue
+              for ts, op, close, raw_ts in parsed[-5:]:
+                  stamp = dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat()
+                  age = now - ts
+                  offset = ts % seconds
+                  expected_close = ts + seconds
+                  print(
+                      f"raw_ts={raw_ts!r} utc={stamp} age_seconds={age} "
+                      f"interval_boundary_offset={offset} "
+                      f"timestamp_plus_interval_utc={dt.datetime.fromtimestamp(expected_close, dt.timezone.utc).isoformat()} "
+                      f"open={op!r} close={close!r}"
+                  )
+              latest_ts = parsed[-1][0]
+              print("LATEST_TIMESTAMP_IS_FUTURE:", latest_ts > now)
+              print("LATEST_TIMESTAMP_ALIGNED_TO_INTERVAL:", latest_ts % seconds == 0)
+              print("LATEST_INTERVAL_END_AFTER_AUDIT_NOW:", latest_ts + seconds > now)
+          PY
