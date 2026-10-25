@@ -40,8 +40,11 @@ jobs:
           python -m py_compile btc_analyzer.py backtest_v314_timing_safe.py
           python - <<'PY'
           import btc_analyzer
+          import backtest_v314_timing_safe as bt
           assert btc_analyzer.route_realistic_self_test() == "PASS"
+          assert bt.timing_safety_self_test() == "PASS"
           print("ROUTE_SELF_TEST=PASS")
+          print("TIMING_SAFETY_SELF_TEST=PASS")
           PY
 
       - name: Run timing-safe historical backtest
