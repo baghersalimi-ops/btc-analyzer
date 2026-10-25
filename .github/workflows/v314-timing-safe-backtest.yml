@@ -1,0 +1,59 @@
+name: V3.14 Timing-Safe Research Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Historical window in days (start with 7 for smoke test)"
+        required: false
+        default: "7"
+  push:
+    branches:
+      - research/v314-candle-close-fix-20261025
+    paths:
+      - backtest_v314_timing_safe.py
+      - .github/workflows/v314-timing-safe-backtest.yml
+
+permissions:
+  contents: read
+
+jobs:
+  timing-safe-backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+        with:
+          ref: research/v314-candle-close-fix-20261025
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install requests pandas numpy
+
+      - name: Compile source and run deterministic route self-test
+        run: |
+          python -m py_compile btc_analyzer.py backtest_v314_timing_safe.py
+          python - <<'PY'
+          import btc_analyzer
+          assert btc_analyzer.route_realistic_self_test() == "PASS"
+          print("ROUTE_SELF_TEST=PASS")
+          PY
+
+      - name: Run timing-safe historical backtest
+        env:
+          DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          mkdir -p data
+          python backtest_v314_timing_safe.py --days "$DAYS" --output data/v314_timing_safe_backtest.csv
+
+      - name: Upload research results
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3.14-timing-safe-backtest-${{ github.run_number }}
+          path: data/v314_timing_safe_backtest.csv
+          retention-days: 30
