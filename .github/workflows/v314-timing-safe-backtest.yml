@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: "Historical window in days (start with 7 for smoke test)"
+        description: "Historical window in days"
         required: false
-        default: "7"
+        default: "60"
   push:
     branches:
       - research/v314-candle-close-fix-20261025
@@ -20,7 +20,7 @@ permissions:
 jobs:
   timing-safe-backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout research branch
         uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
 
       - name: Run timing-safe historical backtest
         env:
-          DAYS: ${{ github.event.inputs.days || '7' }}
+          DAYS: ${{ github.event.inputs.days || '60' }}
         run: |
           mkdir -p data
           python backtest_v314_timing_safe.py --days "$DAYS" --output data/v314_timing_safe_backtest.csv
