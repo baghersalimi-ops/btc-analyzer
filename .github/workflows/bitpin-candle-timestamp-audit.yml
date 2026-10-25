@@ -21,7 +21,7 @@ jobs:
           python-version: "3.12"
       - name: Install dependency
         run: python -m pip install requests
-      - name: Inspect public candle timestamps
+      - name: Inspect public candle timestamps and live updates
         run: |
           python - <<'PY'
           import datetime as dt
@@ -29,33 +29,30 @@ jobs:
           import requests
 
           URL = "https://api.bitpin.org/api/v1/mkt/candles/"
-          now = int(time.time())
-          print("AUDIT_UTC_NOW:", dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat())
-          print("NOTE: timestamp alignment alone cannot prove whether the exchange includes an unclosed candle.")
-          for resolution, seconds in (("5m", 300), ("15m", 900), ("1h", 3600)):
+          SESSION = requests.Session()
+
+          def get_rows(resolution, seconds, now):
               params = {
                   "symbol": "BTC_IRT",
                   "from": now - seconds * 8,
                   "to": now,
                   "res": resolution,
               }
-              response = requests.get(URL, params=params, timeout=25)
-              print(f"\n=== RESOLUTION {resolution} | HTTP {response.status_code} ===")
+              response = SESSION.get(URL, params=params, timeout=25)
+              print(f"HTTP {response.status_code} for {resolution}")
               response.raise_for_status()
               payload = response.json()
-              if isinstance(payload, dict):
-                  rows = payload.get("results", payload.get("data", []))
-              else:
-                  rows = payload
+              rows = payload.get("results", payload.get("data", [])) if isinstance(payload, dict) else payload
               parsed = []
               for row in rows or []:
                   if isinstance(row, dict):
                       raw_ts = row.get("timestamp", row.get("ts", row.get("time")))
-                      close = row.get("close")
-                      op = row.get("open")
+                      op, high, low, close = row.get("open"), row.get("high"), row.get("low"), row.get("close")
                   elif isinstance(row, (list, tuple)) and row:
                       raw_ts = row[0]
                       op = row[1] if len(row) > 1 else None
+                      high = row[2] if len(row) > 2 else None
+                      low = row[3] if len(row) > 3 else None
                       close = row[4] if len(row) > 4 else None
                   else:
                       continue
@@ -63,27 +60,52 @@ jobs:
                       ts = int(float(raw_ts))
                       if ts > 10**12:
                           ts //= 1000
-                      parsed.append((ts, op, close, raw_ts))
+                      parsed.append({"ts": ts, "raw_ts": raw_ts, "open": op, "high": high, "low": low, "close": close})
                   except (TypeError, ValueError):
                       print("UNPARSEABLE_TIMESTAMP_ROW:", repr(row)[:300])
-              parsed.sort(key=lambda x: x[0])
-              print("CANDLE_COUNT:", len(parsed))
-              if not parsed:
-                  print("NO_PARSEABLE_CANDLES")
-                  continue
-              for ts, op, close, raw_ts in parsed[-5:]:
-                  stamp = dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat()
-                  age = now - ts
-                  offset = ts % seconds
-                  expected_close = ts + seconds
+              parsed.sort(key=lambda x: x["ts"])
+              return parsed
+
+          now = int(time.time())
+          print("AUDIT_UTC_NOW:", dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat())
+          print("NOTE: alignment alone cannot prove whether a candle is closed.")
+          first = {}
+          for resolution, seconds in (("5m", 300), ("15m", 900), ("1h", 3600)):
+              parsed = get_rows(resolution, seconds, now)
+              print(f"\n=== INITIAL SNAPSHOT {resolution} | CANDLE_COUNT={len(parsed)} ===")
+              for candle in parsed[-5:]:
+                  ts = candle["ts"]
                   print(
-                      f"raw_ts={raw_ts!r} utc={stamp} age_seconds={age} "
-                      f"interval_boundary_offset={offset} "
-                      f"timestamp_plus_interval_utc={dt.datetime.fromtimestamp(expected_close, dt.timezone.utc).isoformat()} "
-                      f"open={op!r} close={close!r}"
+                      f"ts={candle['raw_ts']!r} utc={dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat()} "
+                      f"age={now-ts}s offset={ts % seconds} open={candle['open']!r} "
+                      f"high={candle['high']!r} low={candle['low']!r} close={candle['close']!r}"
                   )
-              latest_ts = parsed[-1][0]
-              print("LATEST_TIMESTAMP_IS_FUTURE:", latest_ts > now)
-              print("LATEST_TIMESTAMP_ALIGNED_TO_INTERVAL:", latest_ts % seconds == 0)
-              print("LATEST_INTERVAL_END_AFTER_AUDIT_NOW:", latest_ts + seconds > now)
+              if parsed:
+                  first[resolution] = parsed[-1]
+                  latest = parsed[-1]["ts"]
+                  print("LATEST_TIMESTAMP_ALIGNED:", latest % seconds == 0)
+                  print("LATEST_INTERVAL_END_AFTER_NOW:", latest + seconds > now)
+
+          print("\nWAITING_20_SECONDS_FOR_REPEAT_SNAPSHOT")
+          time.sleep(20)
+          now2 = int(time.time())
+          print("SECOND_SNAPSHOT_UTC_NOW:", dt.datetime.fromtimestamp(now2, dt.timezone.utc).isoformat())
+          for resolution, seconds in (("5m", 300), ("15m", 900), ("1h", 3600)):
+              if resolution not in first:
+                  print(f"{resolution}: NO_INITIAL_CANDLE_TO_COMPARE")
+                  continue
+              parsed2 = get_rows(resolution, seconds, now2)
+              by_ts = {c["ts"]: c for c in parsed2}
+              old = first[resolution]
+              new = by_ts.get(old["ts"])
+              print(f"\n=== REPEAT SNAPSHOT {resolution} ===")
+              if new is None:
+                  print("INITIAL_LATEST_CANDLE_NO_LONGER_IN_RESPONSE; cannot compare OHLC")
+                  continue
+              changed = any(str(old[k]) != str(new[k]) for k in ("open", "high", "low", "close"))
+              print("SAME_TIMESTAMP:", old["ts"])
+              print("INITIAL_OHLC:", {k: old[k] for k in ("open", "high", "low", "close")})
+              print("SECOND_OHLC:", {k: new[k] for k in ("open", "high", "low", "close")})
+              print("OHLC_CHANGED_WITH_SAME_TIMESTAMP:", changed)
+              print("INTERPRETATION: changed OHLC at the same timestamp is evidence that this candle is updated while forming; unchanged OHLC in a 20-second sample is inconclusive.")
           PY
