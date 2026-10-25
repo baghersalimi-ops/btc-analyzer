@@ -416,6 +416,13 @@ def main():
                     previous_route = route
                     continue
 
+                actual_rr1 = (tp1 - entry) / (entry - sl)
+                actual_rr2 = (tp2 - entry) / (entry - sl)
+                if actual_rr1 < 1.0 or actual_rr2 <= actual_rr1:
+                    rejected["RR_INVALID_AT_NEXT_OPEN"] = rejected.get("RR_INVALID_AT_NEXT_OPEN", 0) + 1
+                    previous_route = route
+                    continue
+
                 signal = {
                     "signal_time_utc": datetime.fromtimestamp(t, timezone.utc).isoformat(),
                     "plan_entry": plan_entry,
