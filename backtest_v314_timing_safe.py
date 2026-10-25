@@ -115,17 +115,37 @@ def fetch_history(resolution, start_ts, end_ts, limit=120):
     return df
 
 
+def closed_candles_at(df, decision_ts, interval_seconds):
+    """Return only candles whose full interval has ended by decision_ts."""
+    return df[(df["timestamp"] + interval_seconds) <= decision_ts]
+
+
+def timing_safety_self_test():
+    import pandas as pd
+
+    sample = pd.DataFrame({
+        "timestamp": [0, 300, 600],
+        "open": [100.0, 101.0, 102.0],
+    })
+    closed = closed_candles_at(sample, 600, 300)
+    assert closed["timestamp"].tolist() == [0, 300]
+    assert 600 not in closed["timestamp"].tolist()
+    # At decision time 600, the 5m candle stamped 600 is the executable next candle.
+    next_candle = sample[sample["timestamp"] == 600]
+    assert float(next_candle.iloc[0]["open"]) == 102.0
+    return "PASS"
+
+
 def make_results_at(t, frames, cache):
     """
     Build features using only candles whose full interval ended by decision time t.
-    Candle timestamps from Bitpin behave like candle-start timestamps for 5m:
-    a candle starting at t is not available to the signal until t + interval.
+    The candle stamped t is excluded from features and reserved for next-open execution.
     """
     results = {}
 
     for tf, seconds in TIMEFRAMES.items():
         df = frames[tf]
-        closed = df[(df["timestamp"] + seconds) <= t].tail(500).copy()
+        closed = closed_candles_at(df, t, seconds).tail(500).copy()
         if len(closed) < 220:
             return None
 
@@ -274,46 +294,44 @@ def evaluate_signal(signal, future_df):
 
         # Entry candle is entered at its open; reject impossible level ordering upstream.
         if not tp1_hit:
+            rr1 = (tp1 - entry) / risk
+            rr2 = (tp2 - entry) / risk
             if op <= sl:
                 return result("SL_GAP", ts, (op - entry) / risk, "GAP_STOP")
             if op >= tp2:
-                rr1 = (tp1 - entry) / risk
-                rr2 = (tp2 - entry) / risk
                 return result("TP2_GAP", ts, 0.5 * rr1 + 0.5 * rr2, "GAP_TP2")
             if op >= tp1:
-                tp1_hit = True
-                if high >= tp2:
-                    rr1 = (tp1 - entry) / risk
-                    rr2 = (tp2 - entry) / risk
-                    return result("TP2_HIT", ts, 0.5 * rr1 + 0.5 * rr2, "TP1_50pct_THEN_TP2_50pct")
-                if low <= entry:
-                    return result("TP1_THEN_BE", ts, 0.5 * ((tp1 - entry) / risk), "TP1_50pct_THEN_BREAKEVEN")
-                continue
-
+                # Entry is the candle open, so this is normally unreachable for valid levels.
+                return result("INVALID_ENTRY_GAP", ts, None, "ENTRY_AT_OR_ABOVE_TP1")
             if high >= tp1 and low <= sl:
                 return result("AMBIGUOUS", ts, 0.0, "AMBIGUOUS_BEFORE_TP1")
             if low <= sl:
                 return result("SL", ts, -1.0, "FULL_STOP")
+            if high >= tp2 and low <= entry:
+                # TP1 must have happened, but TP2 versus breakeven ordering is unknowable.
+                return result("TP1_THEN_BE_AMBIGUOUS_TP2", ts, 0.5 * rr1, "CONSERVATIVE_SAME_CANDLE")
+            if high >= tp1 and low <= entry:
+                # Conservative ordering: TP1, then breakeven stop in the same candle.
+                return result("TP1_THEN_BE", ts, 0.5 * rr1, "TP1_50pct_THEN_BREAKEVEN_SAME_CANDLE")
+            if high >= tp2:
+                return result("TP2_HIT", ts, 0.5 * rr1 + 0.5 * rr2, "TP1_50pct_THEN_TP2_50pct")
             if high >= tp1:
                 tp1_hit = True
-                if high >= tp2:
-                    rr1 = (tp1 - entry) / risk
-                    rr2 = (tp2 - entry) / risk
-                    return result("TP2_HIT", ts, 0.5 * rr1 + 0.5 * rr2, "TP1_50pct_THEN_TP2_50pct")
                 continue
         else:
+            rr1 = (tp1 - entry) / risk
+            rr2 = (tp2 - entry) / risk
             if op <= entry:
-                return result("TP1_THEN_BE_GAP", ts, 0.5 * ((tp1 - entry) / risk), "TP1_50pct_THEN_BREAKEVEN")
+                # A gap below breakeven can lose on the remaining half.
+                realized = 0.5 * rr1 + 0.5 * ((op - entry) / risk)
+                return result("TP1_THEN_BE_GAP", ts, realized, "TP1_50pct_THEN_GAP_STOP")
             if op >= tp2:
-                rr1 = (tp1 - entry) / risk
-                rr2 = (tp2 - entry) / risk
                 return result("TP2_GAP", ts, 0.5 * rr1 + 0.5 * rr2, "TP1_50pct_THEN_TP2_50pct")
+            if high >= tp2 and low <= entry:
+                return result("TP1_THEN_BE_AMBIGUOUS_TP2", ts, 0.5 * rr1, "CONSERVATIVE_SAME_CANDLE")
             if high >= tp2:
-                rr1 = (tp1 - entry) / risk
-                rr2 = (tp2 - entry) / risk
                 return result("TP2_HIT", ts, 0.5 * rr1 + 0.5 * rr2, "TP1_50pct_THEN_TP2_50pct")
             if low <= entry:
-                rr1 = (tp1 - entry) / risk
                 return result("TP1_THEN_BE", ts, 0.5 * rr1, "TP1_50pct_THEN_BREAKEVEN")
 
     if tp1_hit:
